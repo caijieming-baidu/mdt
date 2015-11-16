@@ -126,6 +126,7 @@ Status DatabaseImpl::Init() {
     tera::TableDescriptor schema_desc(schema_table_name);
     tera::LocalityGroupDescriptor* schema_lg = schema_desc.AddLocalityGroup("lg");
     schema_lg->SetBlockSize(32 * 1024);
+    schema_desc.SetRawKey(tera::kGeneralKv);
     // ignore exist error
     tera_opt_.client_->CreateTable(schema_desc, &error_code);
 
@@ -142,6 +143,12 @@ Status DatabaseImpl::Init() {
     tera_adapter_.opt_ = tera_opt_;
     tera_adapter_.table_prefix_ = db_name_;
     return Status::OK();
+}
+
+DatabaseImpl::~DatabaseImpl() {
+    ReleaseTables();
+    delete tera_opt_.schema_table_;
+    delete tera_opt_.client_;
 }
 
 Status DatabaseImpl::CreateTable(const TableDescription& table_desc) {
@@ -235,6 +242,14 @@ Status DatabaseImpl::OpenTable(const std::string& table_name, Table** table_ptr)
         return Status::NotFound("db open error ");
     }
     table_map_[table_name] = *table_ptr;
+    return Status::OK();
+}
+
+Status DatabaseImpl::ReleaseTables() {
+    std::map<std::string, Table*>::iterator it = table_map_.begin();
+    for (; it != table_map_.end(); ++it) {
+        delete it->second;
+    }
     return Status::OK();
 }
 

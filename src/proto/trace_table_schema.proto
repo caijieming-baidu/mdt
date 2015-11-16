@@ -1,0 +1,28 @@
+package mdt; 
+
+enum FtraceColumnType {
+    TYPE_NONE = 0;
+    TYPE_UINT64 = 3;
+    TYPE_STRING = 9;
+    TYPE_BYTES = 12;
+}
+
+enum FtraceColumnProp {
+    PROP_NONE = 0;
+    PROP_PRIMARY_COL = 1;
+    PROP_INDEX_COL = 2;
+}
+
+message FtraceColumn {
+    optional string name = 1;
+    optional FtraceColumnProp prop = 2;
+    optional FtraceColumnType type = 5;
+    optional bytes value = 6;
+}
+
+message FtraceTableSchema {
+    optional string dbname = 1; 
+    optional string tablename = 2; 
+    repeated FtraceColumn col = 3;
+}
+

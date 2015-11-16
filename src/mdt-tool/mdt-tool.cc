@@ -223,7 +223,7 @@ int main(int ac, char* av[]) {
             HelpManue();
             free(line);
             continue;
-        } else if (cmd_vec[0].compare("CreateTable") == 0 && cmd_vec.size() >= 6) {
+        } else if (cmd_vec[0].compare("CreateTable") == 0 && cmd_vec.size() >= 4) {
             // cmd: CreateTable dbname tablename primary_key_type [index_name index_type]...
             std::cout << "create table: dbname " << cmd_vec[1]
                 << "tablename " << cmd_vec[2]

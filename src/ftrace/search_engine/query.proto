@@ -1,0 +1,71 @@
+package mdt.SearchEngine;
+option py_generic_services = true;
+option cc_generic_services = true;
+// reps status
+enum RpcResponseStatus {
+    RpcOK = 1;
+    RpcTableNotFound = 2;
+    RpcNotSupport = 3;
+}
+
+// search message
+enum RpcComparator {
+    RpcEqualTo = 0;       // ==
+    RpcNotEqualTo = 1;    // !=
+    RpcLess = 2;          // <
+    RpcLessEqual = 3;     // <=
+    RpcGreater = 4;       // >=
+    RpcGreaterEqual = 5;  // >
+}
+
+message RpcIndexCondition {
+    optional string index_table_name = 1;
+    optional RpcComparator cmp = 2;
+    optional string cmp_key = 3;
+}
+
+message RpcSearchRequest {
+    optional string db_name = 1;
+    optional string table_name = 2; 
+    optional string primary_key = 3;
+    repeated RpcIndexCondition condition = 4;
+    optional uint64 start_timestamp = 5;
+    optional uint64 end_timestamp = 6;
+    optional int32 limit = 7;
+}
+
+message RpcResultStream {
+    optional string primary_key = 1;
+    repeated string data_list = 2;
+}
+
+message RpcSearchResponse {
+    repeated RpcResultStream result_list= 1;
+}
+
+// open table
+message RpcOpenTableRequest {
+    optional string db_name = 1;
+    optional string table_name= 2;
+}
+
+message RpcOpenTableResponse {
+    optional RpcResponseStatus status = 1;
+}
+
+// open db
+message RpcOpenDatabaseRequest {
+    optional string db_name = 1;
+}
+
+message RpcOpenDatabaseResponse {
+    optional RpcResponseStatus status = 1;
+}
+
+// rpc service
+service SearchEngineService {
+    rpc Search(RpcSearchRequest) returns(RpcSearchResponse);
+    rpc OpenTable(RpcOpenTableRequest) returns(RpcOpenTableResponse);
+    rpc OpenDatabase(RpcOpenDatabaseRequest) returns(RpcOpenDatabaseResponse);
+}
+

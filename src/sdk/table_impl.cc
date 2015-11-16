@@ -147,7 +147,6 @@ TableImpl::~TableImpl() {
     // free write handle
     //ReleaseDataWriter();
     // TODO: write queue release
-
     thread_pool_.Stop(false);
     FreeTeraTable();
 
@@ -165,7 +164,6 @@ TableImpl::~TableImpl() {
         InternalBatchWrite(context, local_queue);
         delete context;
     }
-
     return;
 }
 

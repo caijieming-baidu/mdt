@@ -1,0 +1,65 @@
+package mdt.galaxy.test;
+
+message PodStat {
+    optional string id = 1;//primary key
+    optional string jobid = 2;// create index
+    optional int32 cpu_used = 3;// create index
+    optional int64 mem_used = 4;// create index
+    optional int32 cpu_quota = 5;// create index
+    optional int64 mem_quota = 6;// create index
+    optional int32 dynamic_cpu_quota = 7;// create index
+    optional int64 dynamic_mem_quota = 8;// create index
+}
+
+message PodEvent {    
+    optional string id = 1;  
+    optional string jobid = 2;// create index
+    // last stage
+    //optional PodStage lstage = 3;
+    // current stage
+    //optional PodStage cstage = 4;
+    // last stage
+    //optional PodState lstate = 5;
+    // current state
+    //optional PodState cstate = 6;
+
+    optional int64 time = 5;
+
+    // log from master , scheduler or agent
+    optional string from = 6;
+    optional string reason = 7;
+    optional string agent_addr = 8;
+    optional string gc_dir = 10;
+}
+
+message JobStat {
+    optional string id = 1;
+    optional int32 replica = 2;
+    optional int32 running = 3;
+    optional int32 pending = 4;
+    optional int32 death = 5;
+
+    optional int32 cpu_quota = 6;// create index
+    optional int64 mem_quota = 7;// create index
+
+    optional int32 cpu_used = 8;// create index
+    optional int64 mem_used = 9;// create index
+
+    optional int32 dynamic_cpu_quota = 10;// create index
+    optional int64 dynamic_mem_quota = 11;// create index
+
+    optional int64 time = 12;
+}
+
+message JobEvent {
+    optional string id = 1;
+    optional string name = 2;
+    optional string uname = 3;
+    optional string action = 5;
+    optional bytes desc = 6;
+    optional string version = 7;
+    //optional JobState state = 8;
+    //optional JobUpdateState update_state = 9;
+    optional int64 time = 10;
+}
+

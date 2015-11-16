@@ -29,7 +29,7 @@ Table* OpenTable(Database* db, const std::string& table_name) {
 
 // 关闭表格
 void CloseTable(Table* table) {
-    delete table;
+    //delete table;
 }
 
 // 写入接口

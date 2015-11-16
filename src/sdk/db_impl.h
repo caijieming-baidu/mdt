@@ -18,7 +18,7 @@ namespace mdt {
 class DatabaseImpl : public Database {
 public:
     DatabaseImpl(const Options& options, const std::string& db_name);
-    ~DatabaseImpl() {}
+    ~DatabaseImpl();
 
     static Status OpenDB(const std::string& db_name, Database** db_ptr);
 
@@ -32,6 +32,7 @@ private:
     static Status CreateDB(const Options& options, const std::string& db_name, Database** db_ptr);
 
     int InternalCreateTable(const TableDescription& table_desc, Table** table_ptr);
+    Status ReleaseTables();
 
     static int AssembleTableSchema(const TableDescription& table_desc,
                                    BigQueryTableSchema* schema);

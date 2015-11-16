@@ -1,0 +1,33 @@
+package mdt; 
+
+message KVContext {
+    optional bytes key = 1;
+    optional bytes value = 2;
+}
+
+message FunctionAnnotation {
+    optional uint64 timestamp = 1;
+    optional string function_name = 2; // service name or function name
+    optional bytes hardware_info = 3; // TODO: not support, user define
+    optional bytes software_info = 4; // TODO: not support, user define
+    optional bytes user_define_info = 5; // TODO: not support, user define
+    optional string text_context = 6; // some readable annotation
+    optional KVContext kv_context = 7; // KVContext list, use for machine analyse
+}
+
+// use for rpc invoke trace
+message TraceIdentify {
+    optional uint64 trace_id = 1;
+    optional uint64 parent_span_id = 2;
+    optional uint64 span_id = 3;
+}
+
+message FunctionSpan {
+    optional TraceIdentify id = 1;
+    optional string span_name = 3;
+    optional string trace_name = 5;
+    repeated FunctionAnnotation annotations = 6; // FunctionAnnotation list
+}
+
+
+
