@@ -1,5 +1,6 @@
 package mdt.SearchEngine;
-
+option py_generic_services = true;
+option cc_generic_services = true;
 // reps status
 enum RpcResponseStatus {
     RpcOK = 1;
@@ -58,7 +59,7 @@ message RpcOpenDatabaseRequest {
 }
 
 message RpcOpenDatabaseResponse {
-    optional RcpResponseStatus status = 1;
+    optional RpcResponseStatus status = 1;
 }
 
 // rpc service
@@ -67,5 +68,4 @@ service SearchEngineService {
     rpc OpenTable(RpcOpenTableRequest) returns(RpcOpenTableResponse);
     rpc OpenDatabase(RpcOpenDatabaseRequest) returns(RpcOpenDatabaseResponse);
 }
-option cc_generic_services = true;
 
