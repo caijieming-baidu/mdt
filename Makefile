@@ -28,6 +28,7 @@ MDTTOOL_SRC := $(wildcard src/mdt-tool/mdt-tool.cc)
 UPDATESCHEMA_SRC := $(wildcard src/mdt-tool/test_update_schema.cc)
 SAMPLE_SRC := $(wildcard src/sample/mdt_test.cc)
 WRITE_TEST_SRC := $(wildcard src/benchmark/write_test.cc)
+DUMPFILE_SRC := $(wildcard src/benchmark/dump_file.cc)
 SYNC_WRITE_TEST_SRC := $(wildcard src/benchmark/sync_write_test.cc)
 MULWRITE_TEST_SRC := $(wildcard src/benchmark/mulcli_write_test.cc)
 SCAN_TEST_SRC := $(wildcard src/benchmark/scan_test.cc)
@@ -39,6 +40,11 @@ C_SAMPLE_SRC := $(wildcard src/sample/c_sample.c)
 FTRACE_SRC := $(wildcard src/ftrace/*.cc)
 FTRACE_TEST_SRC := $(wildcard src/ftrace/test/TEST_log.cc)
 
+###########################
+#	search engine     #
+###########################
+FTRACE_SEARCHENGINE_SRC := $(wildcard src/ftrace/search_engine/*.cc)
+
 SDK_OBJ := $(SDK_SRC:.cc=.o)
 COMMON_OBJ := $(COMMON_SRC:.cc=.o)
 UTIL_OBJ := $(UTIL_SRC:.cc=.o)
@@ -48,6 +54,7 @@ SAMPLE_OBJ := $(SAMPLE_SRC:.cc=.o)
 MDTTOOL_OBJ := $(MDTTOOL_SRC:.cc=.o)
 UPDATESCHEMA_OBJ := $(UPDATESCHEMA_SRC:.cc=.o)
 WRITE_TEST_OBJ := $(WRITE_TEST_SRC:.cc=.o)
+DUMPFILE_OBJ := $(DUMPFILE_SRC:.cc=.o)
 SYNC_WRITE_TEST_OBJ := $(SYNC_WRITE_TEST_SRC:.cc=.o)
 MULWRITE_TEST_OBJ := $(MULWRITE_TEST_SRC:.cc=.o)
 SCAN_TEST_OBJ := $(SCAN_TEST_SRC:.cc=.o)
@@ -59,9 +66,14 @@ C_SAMPLE_OBJ := $(C_SAMPLE_SRC:.c=.o)
 FTRACE_OBJ := $(FTRACE_SRC:.cc=.o)
 FTRACE_TEST_OBJ := $(FTRACE_TEST_SRC:.cc=.o)
 
+###########################
+#	search engine     #
+###########################
+FTRACE_SEARCHENGINE_OBJ := $(FTRACE_SEARCHENGINE_SRC:.cc=.o)
+
 CXX_OBJ := $(SDK_OBJ) $(COMMON_OBJ) $(UTIL_OBJ) $(PROTO_OBJ) $(VERSION_OBJ) \
            $(SAMPLE_OBJ) $(MDTTOOL_OBJ) $(WRITE_TEST_OBJ) $(MULWRITE_TEST_OBJ) \
-           $(SCAN_TEST_OBJ) $(SYNC_WRITE_TEST_OBJ) $(UPDATESCHEMA_OBJ)
+           $(SCAN_TEST_OBJ) $(SYNC_WRITE_TEST_OBJ) $(UPDATESCHEMA_OBJ) $(DUMPFILE_OBJ)
 C_OBJ := $(C_SAMPLE_OBJ)
 
 PROGRAM = 
@@ -71,11 +83,12 @@ MDTTOOL = mdt-tool
 UPDATESCHEMA = test_update_schema
 MDTTOOL_TEST = mdt-tool-test
 WRITE_TEST = write_test
+DUMPFILE = dumpfile
 SYNC_WRITE_TEST = sync_write_test
 MULWRITE_TEST = mulcli_write_test
 SCAN_TEST = scan_test
 C_SAMPLE = c_sample
-
+SEARCH_SERVICE = search_service
 ###########################
 #	trace collector
 ###########################
@@ -83,7 +96,7 @@ FTRACELIBRARY = libftrace.a
 FTRACE_TEST = TEST_log
 
 .PHONY: all clean cleanall test
-all: $(PROGRAM) $(LIBRARY) $(FTRACELIBRARY) $(SAMPLE) $(C_SAMPLE) $(MDTTOOL) $(WRITE_TEST) $(MULWRITE_TEST) $(SCAN_TEST) $(SYNC_WRITE_TEST) $(UPDATESCHEMA) $(FTRACE_TEST) 
+all: $(PROGRAM) $(LIBRARY) $(FTRACELIBRARY) $(SEARCH_SERVICE) $(SAMPLE) $(C_SAMPLE) $(MDTTOOL) $(WRITE_TEST) $(DUMPFILE) $(MULWRITE_TEST) $(SCAN_TEST) $(SYNC_WRITE_TEST) $(UPDATESCHEMA) $(FTRACE_TEST) 
 	mkdir -p build/include build/lib build/bin
 	#cp $(PROGRAM) build/bin
 	cp $(LIBRARY) build/lib
@@ -97,6 +110,8 @@ all: $(PROGRAM) $(LIBRARY) $(FTRACELIBRARY) $(SAMPLE) $(C_SAMPLE) $(MDTTOOL) $(W
 clean:
 	rm -rf $(CXX_OBJ) $(C_OBJ) $(FTRACE_OBJ)
 	rm -rf $(PROGRAM) $(LIBRARY) $(FTRACELIBRARY) $(SAMPLE) $(C_SAMPLE) $(MDTTOOL) $(WRITE_TEST) $(MULWRITE_TEST) $(SCAN_TEST) $(SYNC_WRITE_TEST) $(UPDATESCHEMA) $(FTRACE_TEST)
+	rm -rf search_service
+	rm -rf $(DUMPFILE)
 
 cleanall:
 	$(MAKE) clean
@@ -113,6 +128,9 @@ test_update_schema: $(UPDATESCHEMA_OBJ) $(LIBRARY)
 
 write_test: $(WRITE_TEST_OBJ) $(LIBRARY)
 	$(CXX) -o $@ $(WRITE_TEST_OBJ) $(LIBRARY) $(LDFLAGS) 
+
+dumpfile: $(DUMPFILE_OBJ) $(LIBRARY)
+	$(CXX) -o $@ $(DUMPFILE_OBJ) $(LIBRARY) $(LDFLAGS) 
 
 sync_write_test: $(SYNC_WRITE_TEST_OBJ) $(LIBRARY)
 	$(CXX) -o $@ $(SYNC_WRITE_TEST_OBJ) $(LIBRARY) $(LDFLAGS)
@@ -134,6 +152,9 @@ libftrace.a: $(FTRACE_OBJ) $(SDK_OBJ) $(COMMON_OBJ) $(UTIL_OBJ) $(PROTO_OBJ) $(V
 
 TEST_log: $(FTRACE_TEST_OBJ) $(FTRACELIBRARY)
 	$(CXX) -o $@ $(FTRACE_TEST_OBJ) $(FTRACELIBRARY) $(LDFLAGS)
+
+search_service: $(FTRACE_SEARCHENGINE_OBJ) $(FTRACELIBRARY)
+	$(CXX) -o search_service $(FTRACE_SEARCHENGINE_OBJ) $(FTRACELIBRARY) $(LDFLAGS)
 
 $(CXX_OBJ): %.o: %.cc $(PROTO_OUT_H)
 	$(CXX) $(CXXFLAGS) -c $< -o $@

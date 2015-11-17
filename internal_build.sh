@@ -55,6 +55,10 @@ make -j4
 make install
 cd -
 
+cd sofa-pbrpc/python
+python setup.py install
+cd -
+
 # zookeeper
 tar zxf zookeeper-3.4.6.tar.gz
 cd zookeeper-3.4.6/src/c

@@ -77,9 +77,10 @@ int GetOp(std::vector<std::string>& cmd_vec) {
 
     // search test
     mdt::SearchRequest* search_req = new mdt::SearchRequest;
+    //search_req->primary_key = cmd_vec[];
+    search_req->limit = 10;
     search_req->start_timestamp = 0;
     search_req->end_timestamp = time(NULL);
-
     int num_index = cmd_vec.size() - 6;
     if (num_index % 3 != 0) {
         std::cout << "num of condition index not match\n";
@@ -236,7 +237,7 @@ int main(int ac, char* av[]) {
             PutOp(cmd_vec);
             free(line);
             continue;
-        } else if (cmd_vec[0].compare("Get") == 0 && cmd_vec.size() >= 9) {
+        } else if (cmd_vec[0].compare("Get") == 0 && cmd_vec.size() >= 6) {
             // cmd: Get dbname tablename start_ts(ignore) end_ts(ignore) limit(ignore) [index_name cmp(=, >=, >, <=, <) index_key]
             GetOp(cmd_vec);
             free(line);

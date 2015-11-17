@@ -1,6 +1,16 @@
 #ifndef MDT_SRC_FTRACE_SEARCH_ENGINE_H_
 #define MDT_SRC_FTRACE_SEARCH_ENGINE_H_
 
+#include <map>
+
+#include "sdk/table.h"
+#include "sdk/db.h"
+#include "util/status.h"
+#include "util/thread_pool.h"
+#include "util/mutex.h"
+#include "proto/query.pb.h"
+#include <google/protobuf/service.h>
+
 namespace mdt {
 
 class SearchEngineImpl {
@@ -10,7 +20,10 @@ public:
     Status InitSearchEngine();
     Status OpenDatabase(const std::string& db_name);
     Status OpenTable(const std::string& db_name, const std::string& table_name);
-    Status Search(cont RpcSearchRequest* req, RpcSearchResponse* resp);
+    void Search(::google::protobuf::RpcController* ctrl,
+                  const ::mdt::SearchEngine::RpcSearchRequest* req,
+                  ::mdt::SearchEngine::RpcSearchResponse* resp,
+                  ::google::protobuf::Closure* done);
 private:
     ::mdt::Table* GetTable(const std::string& db_name, const std::string& table_name);
 
@@ -20,24 +33,22 @@ private:
     std::map<std::string, ::mdt::Table*> table_map_;
 };
 
-class SearchEngineServiceImpl : public SearchEngineService {
+class SearchEngineServiceImpl : public ::mdt::SearchEngine::SearchEngineService {
 public:
     explicit SearchEngineServiceImpl(SearchEngineImpl* se);
     ~SearchEngineServiceImpl();
-    int StartServer();
-    int StopServer();
 
     void Search(::google::protobuf::RpcController* ctrl,
-                     const RpcSearchRequest* req,
-                     RpcSearchResponse* resp,
+                     const SearchEngine::RpcSearchRequest* req,
+                     SearchEngine::RpcSearchResponse* resp,
                      ::google::protobuf::Closure* done);
     void OpenTable(::google::protobuf::RpcController* ctrl,
-                   const RpcOpenTableRequest* req,
-                   RpcOpenTableResponse* resp,
+                   const SearchEngine::RpcOpenTableRequest* req,
+                   SearchEngine::RpcOpenTableResponse* resp,
                    ::google::protobuf::Closure* done);
     void OpenDatabase(::google::protobuf::RpcController* ctrl,
-                   const RpcOpenDatabaseRequest* req,
-                   RpcOpenDatabaseResponse* resp,
+                   const SearchEngine::RpcOpenDatabaseRequest* req,
+                   SearchEngine::RpcOpenDatabaseResponse* resp,
                    ::google::protobuf::Closure* done);
 
 private:

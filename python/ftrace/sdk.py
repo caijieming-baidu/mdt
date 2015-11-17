@@ -32,9 +32,13 @@ class FtraceSDK(object):
         request.end_timestamp = time_to
         request.limit = limit
         response = ftrace.Search(controller, request)
-        if response.status != query_pb2.RpcOK:
-            LOG.exception("fail to query ftrace")
-            return [], False
-        return response.data_list, True
+        return response.result_list, True
 
+def FtraceSDK_test_example():
+    cli = FtraceSDK("127.0.0.1:12390")
+    data_list, flag = cli.simple_query("TEST_db", "TEST_table001", "user_paytype_2015-11-16.dat:1", 0, 1457699592, 100)
+    print len(data_list)
+    print data_list[0]
+
+FtraceSDK_test_example()
 

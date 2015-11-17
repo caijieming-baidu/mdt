@@ -1,8 +1,11 @@
 #include <gflags/gflags.h>
 #include "ftrace/search_engine/query_service.h"
+#include <boost/bind.hpp>
 
 DECLARE_int32(se_num_threads);
 DECLARE_bool(mdt_flagfile_set);
+DECLARE_string(mdt_flagfile);
+DECLARE_string(flagfile);
 
 namespace mdt {
 
@@ -22,11 +25,9 @@ Status SearchEngineImpl::InitSearchEngine() {
     char** av = new char*[2];
     av[0] = (char*)"dummy";
     av[1] = NULL;
-    std::string local_flagfile = FLAGS_flagfile;
     FLAGS_flagfile = FLAGS_mdt_flagfile;
     ::google::ParseCommandLineFlags(&ac, &av, true);
     delete av;
-    FLAGS_flagfile = local_flagfile;
     return Status::OK();
 }
 
@@ -57,24 +58,17 @@ Status SearchEngineImpl::OpenTable(const std::string& db_name, const std::string
     std::string internal_tablename = db_name + "#" + table_name;
     std::map<std::string, ::mdt::Table*>::iterator table_it = table_map_.find(internal_tablename);
     if (table_it == table_map_.end()) {
-        table_ptr = ::mdt::OpenTable(db_ptr, tablename);
+        table_ptr = ::mdt::OpenTable(db_ptr, table_name);
         if (table_ptr == NULL) {
             return Status::NotFound("table cannot open");
         }
-        tablemap.insert(std::pair<std::string, ::mdt::Table*>(internal_tablename, table_ptr));
+        table_map_.insert(std::pair<std::string, ::mdt::Table*>(internal_tablename, table_ptr));
     }
     return Status::OK();
 }
 
 ::mdt::Table* SearchEngineImpl::GetTable(const std::string& db_name, const std::string& table_name) {
     MutexLock lock(&mu_);
-    ::mdt::Database* db_ptr = NULL;
-    std::map<std::string, ::mdt::Database*>::iterator it = db_map_.find(db_name);
-    if (it == db_map_.end()) {
-        return NULL;
-    }
-    db_ptr = it->second;
-
     ::mdt::Table* table_ptr = NULL;
     std::string internal_tablename = db_name + "#" + table_name;
     std::map<std::string, ::mdt::Table*>::iterator table_it = table_map_.find(internal_tablename);
@@ -85,9 +79,76 @@ Status SearchEngineImpl::OpenTable(const std::string& db_name, const std::string
     return table_ptr;
 }
 
+void RpcRequestToMdtRequest(const ::mdt::SearchEngine::RpcSearchRequest* req, ::mdt::SearchRequest* req2) {
+    req2->primary_key = req->primary_key();
+    req2->start_timestamp = req->start_timestamp();
+    req2->end_timestamp = req->end_timestamp();
+    req2->limit = req->limit();
+    for (int i = 0; i < req->condition_size(); i++) {
+        const ::mdt::SearchEngine::RpcIndexCondition& idx = req->condition(i);
+        IndexCondition idx2;
+        idx2.index_name = idx.index_table_name();
+        if (idx.cmp() == ::mdt::SearchEngine::RpcEqualTo) {
+            idx2.comparator = kEqualTo;
+        } else if (idx.cmp() == ::mdt::SearchEngine::RpcNotEqualTo) {
+            idx2.comparator = kNotEqualTo;
+        } else if (idx.cmp() == ::mdt::SearchEngine::RpcLess) {
+            idx2.comparator = kLess;
+        } else if (idx.cmp() == ::mdt::SearchEngine::RpcLessEqual) {
+            idx2.comparator = kLessEqual;
+        } else if (idx.cmp() == ::mdt::SearchEngine::RpcGreater) {
+            idx2.comparator = kGreater;
+        } else if (idx.cmp() == ::mdt::SearchEngine::RpcGreaterEqual) {
+            idx2.comparator = kGreaterEqual;
+        } else {
+            // cmp type not know
+            idx2.comparator = (COMPARATOR)idx.cmp();
+        }
+        idx2.compare_value = idx.cmp_key();
+        req2->index_condition_list.push_back(idx2);
+    }
+}
+
+void MdtResponseToRpcResponse(::mdt::SearchResponse* resp2, ::mdt::SearchEngine::RpcSearchResponse* resp) {
+    for (int i = 0; i < (int)resp2->result_stream.size(); i++) {
+        ::mdt::SearchEngine::RpcResultStream* stream = resp->add_result_list();
+        const ::mdt::ResultStream& stream2 = resp2->result_stream[i];
+        stream->set_primary_key(stream2.primary_key);
+        for (int j = 0; j < (int)stream2.result_data_list.size(); j++) {
+            std::string* str = stream->add_data_list();
+            *str = stream2.result_data_list[j];
+            //stream->set_data_list(j, stream2.result_data_list[j]);
+        }
+    }
+}
+
+void SearchEngineImpl::Search(::google::protobuf::RpcController* ctrl,
+                                const ::mdt::SearchEngine::RpcSearchRequest* req,
+                                ::mdt::SearchEngine::RpcSearchResponse* resp,
+                                ::google::protobuf::Closure* done) {
+    Status s = OpenDatabase(req->db_name());
+    if (!s.ok()) {
+        done->Run();
+        return;
+    }
+    s = OpenTable(req->db_name(), req->table_name());
+    if (!s.ok()) {
+        done->Run();
+        return;
+    }
+    ::mdt::Table* table = GetTable(req->db_name(), req->table_name());
+    ::mdt::SearchRequest request;
+    ::mdt::SearchResponse response;
+    RpcRequestToMdtRequest(req, &request);
+    table->Get(&request, &response, NULL, NULL);
+    MdtResponseToRpcResponse(&response, resp);
+    done->Run();
+    return;
+}
+
 // rpc service
 SearchEngineServiceImpl::SearchEngineServiceImpl(SearchEngineImpl* se)
-    : se_ = se,
+    : se_(se),
       se_thread_pool_(new ThreadPool(FLAGS_se_num_threads)) {
 }
 
@@ -95,8 +156,28 @@ SearchEngineServiceImpl::~SearchEngineServiceImpl() {
     delete se_thread_pool_;
 }
 
-int SearchEngineServiceImpl::StartServer() {
+void SearchEngineServiceImpl::Search(::google::protobuf::RpcController* ctrl,
+                                     const ::mdt::SearchEngine::RpcSearchRequest* req,
+                                     ::mdt::SearchEngine::RpcSearchResponse* resp,
+                                     ::google::protobuf::Closure* done) {
+    ThreadPool::Task task = boost::bind(&SearchEngineImpl::Search, se_, ctrl, req, resp, done);
+    se_thread_pool_->AddTask(task);
+}
 
+void SearchEngineServiceImpl::OpenTable(::google::protobuf::RpcController* ctrl,
+                                        const ::mdt::SearchEngine::RpcOpenTableRequest* req,
+                                        ::mdt::SearchEngine::RpcOpenTableResponse* resp,
+                                        ::google::protobuf::Closure* done) {
+    resp->set_status(::mdt::SearchEngine::RpcOK);
+    done->Run();
+}
+
+void SearchEngineServiceImpl::OpenDatabase(::google::protobuf::RpcController* ctrl,
+                                           const ::mdt::SearchEngine::RpcOpenDatabaseRequest* req,
+                                           ::mdt::SearchEngine::RpcOpenDatabaseResponse* resp,
+                                           ::google::protobuf::Closure* done) {
+    resp->set_status(::mdt::SearchEngine::RpcOK);
+    done->Run();
 }
 
 }
