@@ -1,1 +1,1 @@
-../thirdparty/bin/protoc -I ../src/ftrace/search_engine  --python_out=ftrace/ ../src/ftrace/search_engine/query.proto
+../thirdparty/bin/protoc -I.  --python_out=./ftrace/ ../src/proto/query.proto

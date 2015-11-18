@@ -36,9 +36,15 @@ class FtraceSDK(object):
 
 def FtraceSDK_test_example():
     cli = FtraceSDK("127.0.0.1:12390")
-    data_list, flag = cli.simple_query("TEST_db", "TEST_table001", "user_paytype_2015-11-16.dat:1", 0, 1457699592, 100)
-    print len(data_list)
-    print data_list[0]
+    data_list, flag = cli.simple_query("baidu.galaxy", "JobStat", "3729e77e-ae9a-4c1a-b90e-821f1ab95940", 0, 1457699592, 100)
+    import log_pb2
+    for data in data_list:
+        job_stat = log_pb2.JobStat()
+        job_stat.ParseFromString(data.data_list)
+        break
+    #print len(data_list)
+
+#    print data_list[0]
 
 FtraceSDK_test_example()
 

@@ -11,6 +11,7 @@
 #include <gflags/gflags.h>
 
 DECLARE_string(log_file);
+DECLARE_string(flagfile);
 
 DECLARE_string(tera_root_dir);
 DECLARE_string(tera_flag_file_path);
@@ -115,11 +116,14 @@ Status DatabaseImpl::Init() {
     ::tera::ErrorCode error_code;
     tera_opt_.root_path_ = FLAGS_tera_root_dir;
     tera_opt_.tera_flag_ = options_.tera_flag_file_path_;
+    std::string local_flagfile = FLAGS_flagfile;
     tera_opt_.client_ = tera::Client::NewClient(tera_opt_.tera_flag_, "mdt", &error_code);
     if (tera_opt_.client_ == NULL) {
         LOG(INFO) << "open db, new cli error, tera flag " << tera_opt_.tera_flag_;
+        FLAGS_flagfile = local_flagfile;
         return Status::IOError("tera client new error");
     }
+    FLAGS_flagfile = local_flagfile;
 
     // create db schema table (kv mode)
     std::string schema_table_name = db_name_ + "#SchemaTable#";

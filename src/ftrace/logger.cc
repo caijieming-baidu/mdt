@@ -118,9 +118,16 @@ void LogProtoBuf(const std::string& primary_key_name, ::google::protobuf::Messag
         if (primary_key_name == field->name()) {
             req->primary_key = TraceModule::GetFieldValue(message, field);
             req->timestamp = ::mdt::timer::get_micros();
+            /*
             std::ostringstream ostr;
             if (message->SerializeToOstream(&ostr)) {
                 req->data = ostr.str();
+                log_valid = true;
+            } else {
+                std::cout << "serialstring fail\n";
+            }
+            */
+            if (message->SerializeToString(&req->data)) {
                 log_valid = true;
             } else {
                 std::cout << "serialstring fail\n";

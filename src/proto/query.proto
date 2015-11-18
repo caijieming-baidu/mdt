@@ -35,7 +35,7 @@ message RpcSearchRequest {
 
 message RpcResultStream {
     optional string primary_key = 1;
-    repeated string data_list = 2;
+    repeated bytes data_list = 2;
 }
 
 message RpcSearchResponse {
