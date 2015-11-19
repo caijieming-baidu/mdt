@@ -42,11 +42,13 @@ mdt_db_t* mdt_open_db(const char* db_name, const char* conf_path) {
     char** argv = new char*[2];
     argv[0] = (char*)"dummy";
     argv[1] = NULL;
+    std::string local_flagfile = FLAGS_flagfile;
     FLAGS_flagfile = conf_path;
     google::ParseCommandLineFlags(&argc, &argv, true);
 
     mdt::Database* internal_db = mdt::OpenDatabase(db_name);
     delete argv;
+    FLAGS_flagfile = local_flagfile;
     if (internal_db == NULL) {
         return NULL;
     }

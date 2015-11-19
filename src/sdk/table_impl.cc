@@ -564,7 +564,8 @@ Status TableImpl::Get(const SearchRequest* req, SearchResponse* resp, SearchCall
                       void* callback_param) {
     Status s;
     if (!req->primary_key.empty()) {
-        GetByPrimaryKey(req->primary_key, &resp->result_stream);
+        GetByPrimaryKey(req->primary_key, req->start_timestamp, req->end_timestamp,
+                        &resp->result_stream);
     } else if (req->index_condition_list.size() > 0) {
         GetByIndex(req->index_condition_list, req->start_timestamp, req->end_timestamp,
                    req->limit, &resp->result_stream);
@@ -579,11 +580,13 @@ Status TableImpl::Get(const SearchRequest* req, SearchResponse* resp, SearchCall
     return s;
 }
 
+// with timestamp
 Status TableImpl::GetByPrimaryKey(const std::string& primary_key,
+                                  int64_t start_timestamp, int64_t end_timestamp,
                                   std::vector<ResultStream>* result_list) {
-    VLOG(10) << "get by primary key: " << DebugString(primary_key);
+    VLOG(10) << "get by primary key(with timestamp range): " << DebugString(primary_key);
     ResultStream result;
-    Status s = GetSingleRow(primary_key, &result);
+    Status s = GetSingleRow(primary_key, &result, start_timestamp, end_timestamp, NULL, NULL);
     if (s.ok()) {
         result_list->push_back(result);
     }
@@ -640,7 +643,9 @@ Status TableImpl::GetByTimestamp(int64_t start_timestamp, int64_t end_timestamp,
 
             primary_key_list.push_back(primary_key);
             if ((int32_t)primary_key_list.size() >= limit) {
-                GetRows(primary_key_list, limit - result_list->size(), result_list);
+                GetRows(primary_key_list, limit - result_list->size(),
+                        start_timestamp, end_timestamp,
+                        result_list);
                 primary_key_list.clear();
             }
 
@@ -649,7 +654,9 @@ Status TableImpl::GetByTimestamp(int64_t start_timestamp, int64_t end_timestamp,
         if (primary_key_list.size() > 0) {
             CHECK(result->Done());
             CHECK_LT((int32_t)result_list->size(), limit);
-            GetRows(primary_key_list, limit - result_list->size(), result_list);
+            GetRows(primary_key_list, limit - result_list->size(),
+                    start_timestamp, end_timestamp,
+                    result_list);
         }
         delete result;
         delete scan_desc;
@@ -799,7 +806,9 @@ Status TableImpl::GetByExtendIndex(const std::vector<IndexConditionExtend>& inde
         std::vector<std::string> primary_key_list;
         PrimaryKeyMergeSort(pri_vec, &primary_key_list);
         VLOG(10) << "select op, primary key merge sort: " << primary_key_list.size();
-        GetRows(primary_key_list, limit - result_list->size(), result_list);
+        GetRows(primary_key_list, limit - result_list->size(),
+                start_timestamp, end_timestamp,
+                result_list);
     }
 
     for (int i = 0; i < valid_nr_index_table; i++) {
@@ -972,6 +981,7 @@ void GetRowCallback(Status s, ResultStream* result, void* callback_param) {
 }
 
 int32_t TableImpl::GetRows(const std::vector<std::string>& primary_key_list, int32_t limit,
+                           int64_t start_timestamp, int64_t end_timestamp,
                            std::vector<ResultStream>* row_list) {
     std::vector<Status> status_list(primary_key_list.size());
     std::vector<ResultStream> tmp_row_list(primary_key_list.size());
@@ -986,7 +996,9 @@ int32_t TableImpl::GetRows(const std::vector<std::string>& primary_key_list, int
         param->mutex = &mutex;
         param->cond = &cond;
 
-        GetSingleRow(primary_key_list[i], &tmp_row_list[i], GetRowCallback, param);
+        GetSingleRow(primary_key_list[i], &tmp_row_list[i],
+                     start_timestamp, end_timestamp,
+                     GetRowCallback, param);
     }
 
     MutexLock l(&mutex);
@@ -1082,6 +1094,7 @@ void TableImpl::ReadData(tera::RowReader* reader) {
 ////    Concurrently Read span in single row    /////
 /////////////////////////////////////////////////////
 Status TableImpl::GetSingleRow(const std::string& primary_key, ResultStream* result,
+                               int64_t start_timestamp, int64_t end_timestamp,
                                GetSingleRowCallback user_callback, void* user_param) {
     Mutex mu;
     CondVar cond(&mu);
@@ -1108,6 +1121,9 @@ Status TableImpl::GetSingleRow(const std::string& primary_key, ResultStream* res
     } else {
         tera::RowReader* reader = primary_table->NewRowReader(primary_key);
         reader->AddColumnFamily(kPrimaryTableColumnFamily);
+        // if end_timestamp == 0, then read the whole trace row
+        if (end_timestamp > 0)
+            reader->SetTimeRange(start_timestamp, end_timestamp);
         reader->SetCallBack(ReadPrimaryTableCallback);
         reader->SetContext(param);
 
