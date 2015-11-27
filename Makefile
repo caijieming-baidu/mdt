@@ -37,7 +37,7 @@ C_SAMPLE_SRC := $(wildcard src/sample/c_sample.c)
 ###########################
 #	trace collector   #
 ###########################
-FTRACE_SRC := $(wildcard src/ftrace/*.cc)
+FTRACE_SRC := $(wildcard src/ftrace/collector/*.cc)
 FTRACE_TEST_SRC := $(wildcard src/ftrace/test/TEST_log.cc)
 
 ###########################
@@ -147,14 +147,14 @@ c_sample: $(C_SAMPLE_OBJ) $(LIBRARY)
 libmdt.a: $(SDK_OBJ) $(COMMON_OBJ) $(UTIL_OBJ) $(PROTO_OBJ) $(VERSION_OBJ)
 	$(AR) -rs $@ $(SDK_OBJ) $(COMMON_OBJ) $(UTIL_OBJ) $(PROTO_OBJ) $(VERSION_OBJ)
 
-libftrace.a: $(FTRACE_OBJ) $(SDK_OBJ) $(COMMON_OBJ) $(UTIL_OBJ) $(PROTO_OBJ) $(VERSION_OBJ)
-	$(AR) -rs $@ $(FTRACE_OBJ) $(SDK_OBJ) $(COMMON_OBJ) $(UTIL_OBJ) $(PROTO_OBJ) $(VERSION_OBJ)
+libftrace.a: $(FTRACE_OBJ) $(PROTO_OBJ) $(VERSION_OBJ)
+	$(AR) -rs $@ $(FTRACE_OBJ) $(PROTO_OBJ) $(VERSION_OBJ)
 
 TEST_log: $(FTRACE_TEST_OBJ) $(FTRACELIBRARY)
 	$(CXX) -o $@ $(FTRACE_TEST_OBJ) $(FTRACELIBRARY) $(LDFLAGS)
 
-search_service: $(FTRACE_SEARCHENGINE_OBJ) $(FTRACELIBRARY)
-	$(CXX) -o search_service $(FTRACE_SEARCHENGINE_OBJ) $(FTRACELIBRARY) $(LDFLAGS)
+search_service: $(FTRACE_SEARCHENGINE_OBJ) $(LIBRARY) 
+	$(CXX) -o search_service $(FTRACE_SEARCHENGINE_OBJ) $(LIBRARY) $(LDFLAGS)
 
 $(CXX_OBJ): %.o: %.cc $(PROTO_OUT_H)
 	$(CXX) $(CXXFLAGS) -c $< -o $@

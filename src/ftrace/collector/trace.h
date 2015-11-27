@@ -3,11 +3,10 @@
 
 #include <stack>
 
-#include "sdk/table.h"
-#include "sdk/db.h"
 #include "util/counter.h"
 #include "util/mutex.h"
 #include "proto/ftrace.pb.h"
+#include <sofa/pbrpc/pbrpc.h>
 
 namespace mdt {
 
@@ -80,11 +79,6 @@ private:
     std::map<uint64_t, std::stack<void*> > thread_value_; // <thread id, stack<Trace ptr> >
 };
 
-struct DBMap {
-    Mutex mutex;
-    std::map<std::string, ::mdt::Table*> table; // dbname#tablename
-    std::map<std::string, ::mdt::Database*> db; // dbname
-};
 struct TraceModule {
     //////////////////////////////
     /////   User interface   /////
@@ -94,7 +88,6 @@ struct TraceModule {
     // galaxy interface
     static std::string GetFieldValue(::google::protobuf::Message* message,
                                      const ::google::protobuf::FieldDescriptor* field);
-    static ::mdt::Table* GetProtoBufTable(const std::string& dbname, const std::string& tablename);
     static void OpenProtoBufLog(const std::string& dbname, const std::string& tablename);
     static void CloseProtoBufLog(const std::string& dbname, const std::string& tablename);
 
@@ -111,11 +104,12 @@ struct TraceModule {
     static void ClearTraceBySpanId(uint64_t span_id);
 
     static pthread_key_t thread_key; // thread_load variable
-
     static Mutex kmutex;
     static std::map<uint64_t, Trace*> ktrace_map;
     static std::map<uint64_t, Trace*> kspan_map; // gobal span map
-    static DBMap kDBMap;
+
+    // galaxy trace
+    static ::sofa::pbrpc::RpcClient rpc_client;
 };
 
 }

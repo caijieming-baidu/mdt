@@ -4,7 +4,6 @@
 #include <iostream>
 #include <stdint.h>
 #include <google/protobuf/message.h>
-//#include <proto/ftrace.pb.h>
 
 namespace mdt {
 

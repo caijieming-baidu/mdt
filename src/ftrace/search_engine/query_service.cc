@@ -86,9 +86,11 @@ void RpcRequestToMdtRequest(const ::mdt::SearchEngine::RpcSearchRequest* req, ::
     req2->limit = req->limit();
     for (int i = 0; i < req->condition_size(); i++) {
         const ::mdt::SearchEngine::RpcIndexCondition& idx = req->condition(i);
-        IndexCondition idx2;
+        ::mdt::IndexCondition idx2;
         idx2.index_name = idx.index_table_name();
-        if (idx.cmp() == ::mdt::SearchEngine::RpcEqualTo) {
+        if (idx.cmp() == ::mdt::SearchEngine::RpcGreater) {
+            idx2.comparator = kGreater;
+        } else if (idx.cmp() == ::mdt::SearchEngine::RpcEqualTo) {
             idx2.comparator = kEqualTo;
         } else if (idx.cmp() == ::mdt::SearchEngine::RpcNotEqualTo) {
             idx2.comparator = kNotEqualTo;
@@ -96,8 +98,6 @@ void RpcRequestToMdtRequest(const ::mdt::SearchEngine::RpcSearchRequest* req, ::
             idx2.comparator = kLess;
         } else if (idx.cmp() == ::mdt::SearchEngine::RpcLessEqual) {
             idx2.comparator = kLessEqual;
-        } else if (idx.cmp() == ::mdt::SearchEngine::RpcGreater) {
-            idx2.comparator = kGreater;
         } else if (idx.cmp() == ::mdt::SearchEngine::RpcGreaterEqual) {
             idx2.comparator = kGreaterEqual;
         } else {
@@ -146,7 +146,71 @@ void SearchEngineImpl::Search(::google::protobuf::RpcController* ctrl,
     return;
 }
 
-// rpc service
+// store service
+void RpcStoreRequestToMdtRequest(const ::mdt::SearchEngine::RpcStoreRequest* req,
+                                 ::mdt::StoreRequest* request) {
+    request->primary_key = req->primary_key();
+    request->timestamp = req->timestamp();
+    request->data = req->data();
+    for (int i = 0; i < req->index_list_size(); i++) {
+        const ::mdt::SearchEngine::RpcStoreIndex& idx = req->index_list(i);
+        ::mdt::Index index;
+        index.index_name = idx.index_table();
+        index.index_key = idx.key();
+        request->index_list.push_back(index);
+    }
+}
+
+void MdtResponseToRpcStoreResponse(::mdt::StoreResponse* response,
+                                   ::mdt::SearchEngine::RpcStoreResponse* resp) {
+    resp->set_status(::mdt::SearchEngine::RpcOK);
+}
+
+struct StoreCallback_param {
+    ::mdt::SearchEngine::RpcStoreResponse* resp;
+    ::google::protobuf::Closure* done;
+};
+
+void StoreCallback_dump(mdt::Table* table, mdt::StoreRequest* request,
+                        mdt::StoreResponse* response,
+                        void* callback_param) {
+    StoreCallback_param* param = (StoreCallback_param*)callback_param;
+    MdtResponseToRpcStoreResponse(response, param->resp);
+    param->done->Run();
+    delete request;
+    delete response;
+    delete param;
+}
+void SearchEngineImpl::Store(::google::protobuf::RpcController* ctrl,
+                             const ::mdt::SearchEngine::RpcStoreRequest* req,
+                             ::mdt::SearchEngine::RpcStoreResponse* resp,
+                             ::google::protobuf::Closure* done) {
+    Status s = OpenDatabase(req->db_name());
+    if (!s.ok()) {
+        done->Run();
+        return;
+    }
+    s = OpenTable(req->db_name(), req->table_name());
+    if (!s.ok()) {
+        done->Run();
+        return;
+    }
+    ::mdt::Table* table = GetTable(req->db_name(), req->table_name());
+
+    ::mdt::StoreRequest* request = new ::mdt::StoreRequest();
+    ::mdt::StoreResponse* response = new ::mdt::StoreResponse();
+    StoreCallback_param* param = new StoreCallback_param();
+    param->resp = resp;
+    param->done = done;
+    ::mdt::StoreCallback callback = StoreCallback_dump;
+    RpcStoreRequestToMdtRequest(req, request);
+    table->Put(request, response, callback, param);
+    return;
+}
+
+/////////////////////////////////
+//      rpc service            //
+/////////////////////////////////
 SearchEngineServiceImpl::SearchEngineServiceImpl(SearchEngineImpl* se)
     : se_(se),
       se_thread_pool_(new ThreadPool(FLAGS_se_num_threads)) {
@@ -161,6 +225,14 @@ void SearchEngineServiceImpl::Search(::google::protobuf::RpcController* ctrl,
                                      ::mdt::SearchEngine::RpcSearchResponse* resp,
                                      ::google::protobuf::Closure* done) {
     ThreadPool::Task task = boost::bind(&SearchEngineImpl::Search, se_, ctrl, req, resp, done);
+    se_thread_pool_->AddTask(task);
+}
+
+void SearchEngineServiceImpl::Store(::google::protobuf::RpcController* ctrl,
+                                    const ::mdt::SearchEngine::RpcStoreRequest* req,
+                                    ::mdt::SearchEngine::RpcStoreResponse* resp,
+                                    ::google::protobuf::Closure* done) {
+    ThreadPool::Task task = boost::bind(&SearchEngineImpl::Store, se_, ctrl, req, resp, done);
     se_thread_pool_->AddTask(task);
 }
 

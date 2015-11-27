@@ -128,17 +128,10 @@ void Get(Table* table, const SearchRequest* request, SearchResponse* response,
 // 数据类型
 enum TYPE {
     kBytes = 0,
-    kBool = 1,
-    kInt8 = 2,
-    kUInt8 = 3,
-    kInt16 = 4,
-    kUInt16 = 5,
     kInt32 = 6,
     kUInt32 = 7,
     kInt64 = 8,
-    kUint64 = 9,
-    kFloat = 10,
-    kDouble = 11
+    kUInt64 = 9,
 };
 
 // 索引描述

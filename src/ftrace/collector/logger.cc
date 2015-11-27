@@ -1,18 +1,18 @@
 #include <stdarg.h>
 #include <sstream>
 
-#include "sdk/sdk.h"
-#include "sdk/table.h"
-#include "sdk/db.h"
 #include <gflags/gflags.h>
-#include "ftrace/logger.h"
-#include "ftrace/trace.h"
+#include "ftrace/collector/logger.h"
+#include "ftrace/collector/trace.h"
 #include <google/protobuf/message.h>
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/descriptor.pb.h>
+#include <sofa/pbrpc/pbrpc.h>
+#include "proto/query.pb.h"
 
 DECLARE_uint64(max_text_annotation_size);
 DECLARE_bool(enable_debug_put_pb);
+DECLARE_string(mdt_server_addr);
 
 namespace mdt {
 
@@ -83,31 +83,66 @@ void CloseProtoBufLog(const std::string& dbname, const std::string& tablename) {
     TraceModule::CloseProtoBufLog(dbname, tablename);
 }
 
-static ::google::protobuf::DescriptorProto descriptor_proto;
-
-void DummyPutCallback(mdt::Table* table, mdt::StoreRequest* request,
-                        mdt::StoreResponse* response,
-                        void* callback_param) {
-    if (FLAGS_enable_debug_put_pb) {
-        std::cout << "put callback\n";
-        const ::google::protobuf::Descriptor* descriptor = descriptor_proto.descriptor();
-        std::cout << descriptor->DebugString();
-    }
-    delete request;
-    delete response;
+void StoreCallbackDummy(::sofa::pbrpc::RpcController* ctrl,
+                         ::mdt::SearchEngine::RpcStoreRequest* req,
+                         ::mdt::SearchEngine::RpcStoreResponse* resp) {
+    delete ctrl;
+    delete req;
+    delete resp;
 }
+
+inline int64_t get_micros() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return static_cast<int64_t>(tv.tv_sec) * 1000000 + tv.tv_usec;
+}
+
 void LogProtoBuf(const std::string& primary_key_name, ::google::protobuf::Message* message) {
     const ::google::protobuf::Descriptor* descriptor = message->GetDescriptor();
     const std::string& tablename = descriptor->name();
     const std::string& fullname = descriptor->full_name();
     std::string dbname(fullname, 0, fullname.size() - tablename.size() - 1);
-    ::mdt::Table* table = TraceModule::GetProtoBufTable(dbname, tablename);
-    if (table == NULL) return ;
 
-    descriptor_proto.Clear();
-    descriptor->CopyTo(&descriptor_proto);
+    // store pb, init rpc
+    ::sofa::pbrpc::RpcChannelOptions channel_options;
+    ::sofa::pbrpc::RpcChannel channel(&TraceModule::rpc_client, FLAGS_mdt_server_addr, channel_options);
+    ::sofa::pbrpc::RpcController* ctrl = new ::sofa::pbrpc::RpcController();
+    ctrl->SetTimeout(3000);
+    ::mdt::SearchEngine::RpcStoreRequest* req = new ::mdt::SearchEngine::RpcStoreRequest();
+    ::mdt::SearchEngine::RpcStoreResponse* resp = new ::mdt::SearchEngine::RpcStoreResponse();
+    ::google::protobuf::Closure* done = ::sofa::pbrpc::NewClosure(
+                                &StoreCallbackDummy, ctrl, req, resp);
+    ::mdt::SearchEngine::SearchEngineService_Stub service(&channel);
 
-    // store pb
+    // prepare request
+    req->set_db_name(dbname);
+    req->set_table_name(tablename);
+    bool log_valid = false;
+    for (int i = 0; i < descriptor->field_count(); i++) {
+        const ::google::protobuf::FieldDescriptor* field = descriptor->field(i);
+        const ::google::protobuf::Reflection* reflection = message->GetReflection();
+        if (field == NULL || !reflection->HasField(*message, field)) continue;
+        // set primary key
+        if (primary_key_name == field->name()) {
+            req->set_primary_key(TraceModule::GetFieldValue(message, field));
+            req->set_timestamp(get_micros());
+            if (message->SerializeToString(req->mutable_data())) {
+                log_valid = true;
+            } else {
+                std::cout << "serialstring fail\n";
+            }
+        } else {
+            ::mdt::SearchEngine::RpcStoreIndex* idx = req->add_index_list();
+            idx->set_index_table(field->name());
+            idx->set_key(TraceModule::GetFieldValue(message, field));
+        }
+    }
+    if (log_valid) {
+        service.Store(ctrl, req, resp, done);
+    } else {
+        StoreCallbackDummy(ctrl, req, resp);
+    }
+#if 0
     bool log_valid = false;
     ::mdt::StoreRequest* req = new ::mdt::StoreRequest;
     ::mdt::StoreResponse* resp = new ::mdt::StoreResponse;
@@ -118,15 +153,6 @@ void LogProtoBuf(const std::string& primary_key_name, ::google::protobuf::Messag
         if (primary_key_name == field->name()) {
             req->primary_key = TraceModule::GetFieldValue(message, field);
             req->timestamp = ::mdt::timer::get_micros();
-            /*
-            std::ostringstream ostr;
-            if (message->SerializeToOstream(&ostr)) {
-                req->data = ostr.str();
-                log_valid = true;
-            } else {
-                std::cout << "serialstring fail\n";
-            }
-            */
             if (message->SerializeToString(&req->data)) {
                 log_valid = true;
             } else {
@@ -147,6 +173,7 @@ void LogProtoBuf(const std::string& primary_key_name, ::google::protobuf::Messag
     } else {
         callback(table, req, resp, NULL);
     }
+#endif
     return;
 }
 

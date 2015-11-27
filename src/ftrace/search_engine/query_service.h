@@ -24,6 +24,10 @@ public:
                   const ::mdt::SearchEngine::RpcSearchRequest* req,
                   ::mdt::SearchEngine::RpcSearchResponse* resp,
                   ::google::protobuf::Closure* done);
+    void Store(::google::protobuf::RpcController* ctrl,
+               const ::mdt::SearchEngine::RpcStoreRequest* req,
+               ::mdt::SearchEngine::RpcStoreResponse* resp,
+               ::google::protobuf::Closure* done);
 private:
     ::mdt::Table* GetTable(const std::string& db_name, const std::string& table_name);
 
@@ -42,6 +46,10 @@ public:
                      const SearchEngine::RpcSearchRequest* req,
                      SearchEngine::RpcSearchResponse* resp,
                      ::google::protobuf::Closure* done);
+    void Store(::google::protobuf::RpcController* ctrl,
+               const ::mdt::SearchEngine::RpcStoreRequest* req,
+               ::mdt::SearchEngine::RpcStoreResponse* resp,
+               ::google::protobuf::Closure* done);
     void OpenTable(::google::protobuf::RpcController* ctrl,
                    const SearchEngine::RpcOpenTableRequest* req,
                    SearchEngine::RpcOpenTableResponse* resp,

@@ -1,8 +1,8 @@
 #include <queue>
 #include <unistd.h>
-#include "ftrace/logger.h"
+#include "ftrace/collector/logger.h"
 #include "util/mutex.h"
-
+#include <sstream>
 #include "proto/ftrace_test.pb.h"
 
 typedef void* (*ThreadFunc)(void*);
@@ -115,17 +115,23 @@ void TEST_case002() {
 void TEST_case003() {
     ::mdt::galaxy::test::PodStat pod_stat;
     std::cout << "case003...\n";
-    pod_stat.set_id("88880000aaaa");
-    pod_stat.set_jobid("ddddeeeeffff");
-    pod_stat.set_cpu_used(80);
-    pod_stat.set_mem_used(1000000000);
-    pod_stat.set_cpu_quota(90);
-    pod_stat.set_mem_quota(2000000000);
-    pod_stat.set_dynamic_cpu_quota(85);
-    pod_stat.set_dynamic_mem_quota(1500000000);
-    ::mdt::OpenProtoBufLog("mdt.galaxy.test", "PodStat");
-    ::mdt::LogProtoBuf("id", &pod_stat);
-    //::mdt::CloseProtoBufLog("mdt.galaxy.test", "PodStat");
+    for (uint64_t i = 0; i < 100; i++) {
+        std::ostringstream os;
+        os << i;
+        std::string s = os.str();
+        pod_stat.set_id(s);
+        pod_stat.set_jobid("ddddeeeeffff");
+        pod_stat.set_cpu_used(80);
+        pod_stat.set_mem_used(1000000000);
+        pod_stat.set_cpu_quota(90);
+        pod_stat.set_mem_quota(2000000000);
+        pod_stat.set_dynamic_cpu_quota(85);
+        pod_stat.set_dynamic_mem_quota(1500000000);
+        //::mdt::OpenProtoBufLog("mdt.galaxy.test", "PodStat");
+        ::mdt::LogProtoBuf("id", &pod_stat);
+        //::mdt::CloseProtoBufLog("mdt.galaxy.test", "PodStat");
+    }
+
 }
 
 void TEST_case004() {
@@ -178,6 +184,7 @@ int main(int ac, char* av[]) {
     TEST_case003();
     TEST_case002();
     TEST_case004();
+    sleep(1);
     return 0;
 }
 
