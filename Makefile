@@ -99,7 +99,8 @@ FTRACE_TEST = TEST_log
 all: $(PROGRAM) $(LIBRARY) $(FTRACELIBRARY) $(SEARCH_SERVICE) $(SAMPLE) $(C_SAMPLE) $(MDTTOOL) $(WRITE_TEST) $(DUMPFILE) $(MULWRITE_TEST) $(SCAN_TEST) $(SYNC_WRITE_TEST) $(UPDATESCHEMA) $(FTRACE_TEST) 
 	mkdir -p build/include build/lib build/bin
 	#cp $(PROGRAM) build/bin
-	cp $(LIBRARY) build/lib
+	cp $(LIBRARY) $(FTRACELIBRARY) build/lib
+	cp src/ftrace/collector/logger.h build/include
 	cp src/sdk/sdk.h build/include/mdt.h
 	cp src/sdk/c.h build/include/mdt_c.h
 	cp src/sdk/mdt.go build/include/mdt.go
