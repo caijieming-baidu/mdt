@@ -104,7 +104,6 @@ all: $(PROGRAM) $(LIBRARY) $(FTRACELIBRARY) $(SEARCH_SERVICE) $(SAMPLE) $(C_SAMP
 	cp src/sdk/sdk.h build/include/mdt.h
 	cp src/sdk/c.h build/include/mdt_c.h
 	cp src/sdk/mdt.go build/include/mdt.go
-	cp -r conf build
 	cp $(DEPS_LIBRARIES) build/lib
 	echo 'Done'
 
