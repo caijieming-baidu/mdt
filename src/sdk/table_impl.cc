@@ -1005,6 +1005,8 @@ void FilterIndexCallback(Status s, ResultStream* result, void* callback_param) {
         ++(*param->got_count);
     }
     --(*param->pending_count);
+    VLOG(12) << "filter index callback, priamry key " << result->primary_key
+	<< ", pending_count " << (*param->pending_count);
     if ((*param->pending_count) == 0) {
         param->cond->Signal();
     }
@@ -1029,14 +1031,22 @@ void TableImpl::GetByFilterIndex(tera::Table* index_table,
         std::string primary_key(stream->Qualifier(), 8, std::string::npos);
         {
             MutexLock l(mutex);
+            // :(,  compile optimistic may cause error
+            int32_t* pending_count_ptr = &pending_count;
+            if ((int32_t)(*pending_count_ptr) >= limit) {
+                // if has limit getrow flying, wait for finish
+                VLOG(12) << "wait flying GetSingleRow finish, pending count " << *pending_count_ptr
+                    << ", limit " << limit;
+	        while ((int32_t)(*pending_count_ptr) > 0) {cond.Wait();}
+            }
             if (*finish || *counter >= limit) {
                 break;
             }
-            VLOG(12) << "select op, primary key: " << primary_key;
             if (results->find(primary_key) != results->end()) {
                 stream->Next();
                 continue;
             }
+            VLOG(12) << "select op, primary key: " << DebugString(primary_key);
             (*results)[primary_key].primary_key = ""; // mark as invalid
             pending_count++;
         }
@@ -1054,25 +1064,28 @@ void TableImpl::GetByFilterIndex(tera::Table* index_table,
 
         stream->Next();
     }
-
-    VLOG(10) << "finish scan index: " << index_table->GetName() << ", get data num: " << got_count;
-    // stop other index table scan streams
-    if (stream->Done()) {
-        VLOG(10) << "finish scan index: " << index_table->GetName()
-                 << ", notify other index table scan streams to stop";
-        MutexLock l(mutex);
-        *finish = true;
-    }
     delete stream;
+
+    // stop other index table scan streams
+    {
+        MutexLock l(mutex);
+	if (*finish == false) {
+       	    VLOG(10) << "finish scan index: " << index_table->GetName()
+                 << ", notify other index table scan streams to stop";
+	    *finish = true;
+	}
+    }
 
     // wait for background read
     VLOG(10) << "finish scan index: " << index_table->GetName()
              << ", wait for background read completion";
-    MutexLock l(mutex);
-    while (pending_count > 0) {
-        cond.Wait();
+    {
+	MutexLock l(mutex);
+        // :(,  compile optimistic may cause error
+        int32_t* pending_count_ptr = &pending_count;
+	while ((int32_t)(*pending_count_ptr) > 0) {cond.Wait();}
+    	VLOG(10) << "finish scan index: " << index_table->GetName() << ", all done, get data_num " << got_count;
     }
-    VLOG(10) << "finish scan index: " << index_table->GetName() << ", all done";
 }
 
 bool TableImpl::ScanMultiIndexTables(tera::Table** index_table_list,
@@ -1336,7 +1349,7 @@ void TableImpl::ReadData(tera::RowReader* reader) {
             std::string data;
             Status s = param->table->ReadDataFromFile(location, &data);
             if (s.ok()) {
-                VLOG(12) << "finsh read data from " << location;
+                VLOG(12) << "finish read data from " << location;
                 result->result_data_list.push_back(data);
             } else {
                 LOG(WARNING) << "fail to read data from " << location << " error: " << s.ToString();
@@ -1346,11 +1359,13 @@ void TableImpl::ReadData(tera::RowReader* reader) {
 
     Status s;
     if (reader->GetError().GetType() != tera::ErrorCode::kOK) {
+	LOG(WARNING) << "tera row reader error, primary key " << primary_key;
         s = Status::IOError("tera error");
     } else if (result->result_data_list.size() > 0) {
         result->primary_key = primary_key;
         s = Status::OK();
     } else {
+	LOG(WARNING) << "row not found, priamry key " << primary_key;
         s = Status::NotFound("row not found");
     }
     delete reader;

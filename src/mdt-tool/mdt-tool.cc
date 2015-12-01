@@ -398,6 +398,15 @@ int main(int ac, char* av[]) {
         } else if (cmd_vec[0].size() == 0) {
             free(line);
             continue;
+        } else if (cmd_vec[0].compare("GetPri") == 0 && cmd_vec.size() == 7) {
+            // cmd: GetPri dbname tablename start_ts(ignore) end_ts(ignore) limit(ignore) primary_key
+            SearchPrimaryKey(cmd_vec);
+            add_history(line);
+            free(line);
+            continue;
+        } else if (cmd_vec[0].size() == 0) {
+            free(line);
+            continue;
         } else {
             std::cout << "cmd not known\n";
             free(line);
