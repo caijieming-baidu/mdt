@@ -28,6 +28,8 @@ DECLARE_bool(enable_scan_control);
 DECLARE_int64(batch_scan_buffer_size);
 DECLARE_bool(enable_qu_range);
 DECLARE_int64(tera_scan_pack_interval);
+DECLARE_int64(tera_table_ttl);
+DECLARE_int64(gc_interval);
 
 namespace mdt {
 
@@ -151,6 +153,11 @@ TableImpl::TableImpl(const TableDescription& table_desc,
     queue_timer_cv_(&queue_timer_mu_) {
     // create timer
     pthread_create(&timer_tid_, NULL, &TableImpl::TimerThreadWrapper, this);
+
+    // create gc
+    ttl_ = FLAGS_tera_table_ttl;
+    gc_stop_ = false;
+    pthread_create(&gc_tid_, NULL, &TableImpl::GarbageCleanThreadWrapper, this);
 }
 
 TableImpl::~TableImpl() {
@@ -174,6 +181,10 @@ TableImpl::~TableImpl() {
         InternalBatchWrite(context, local_queue);
         delete context;
     }
+
+    // gc stop
+    gc_stop_ = true;
+    //pthread_join(gc_tid_, NULL);
     return;
 }
 
@@ -1830,6 +1841,81 @@ void TableImpl::ReleaseDataReader(const std::string& filename) {
             }
             delete reader.file_;
             file_map_.erase(it);
+        }
+    }
+}
+
+// gc impl
+void* TableImpl::GarbageCleanThreadWrapper(void* arg) {
+    reinterpret_cast<TableImpl*>(arg)->GarbageClean();
+    return NULL;
+}
+
+void TableImpl::GarbageClean() {
+    struct timeval dummyfiletime;
+    std::string dummyfname = fs_.root_path_ + "/" + TimeToString(&dummyfiletime) + ".data";
+
+    // random sleep
+    struct timeval randtime;
+    gettimeofday(&randtime, NULL);
+    uint64_t sleep_duration = (randtime.tv_usec % 60) * 60000;
+    usleep(sleep_duration);
+
+    // enable gc
+    while (1) {
+        // handle gc per hour
+        if (gc_stop_ == true) {
+            break;
+        }
+        usleep(FLAGS_gc_interval);
+        if (ttl_ == 0) {
+            continue;
+        }
+
+        std::vector<std::string> result;
+        fs_.env_->GetChildren(fs_.root_path_, &result, NULL);
+
+        for (uint64_t i = 0; i < result.size(); i++) {
+            std::string& filename = result[i];
+            if (filename.size() == dummyfname.size()) {
+                // ttl check , ttl + 1hour be should index data has been invalid
+                struct timeval now_tv;
+                gettimeofday(&now_tv, NULL);
+                int64_t ts = static_cast<int64_t>(now_tv.tv_sec) * 1000000 + now_tv.tv_usec;
+                int64_t file_time = (int64_t)(ts - ttl_ - 3600000000);
+                if (file_time < 0) {
+                    continue;
+                }
+
+                const time_t seconds = file_time / 1000000;
+                struct tm t;
+                localtime_r(&seconds, &t);
+                char buf[34];
+                char* p = buf;
+                p += snprintf(p, 34,
+                        "%04d-%02d-%02d-%02d:%02d:%02d.%06d.%06lu",
+                        t.tm_year + 1900,
+                        t.tm_mon + 1,
+                        t.tm_mday,
+                        t.tm_hour,
+                        t.tm_min,
+                        t.tm_sec,
+                        static_cast<int>(0),
+                        (unsigned long)(0));
+                std::string time_buf(buf, 33);
+                std::string delete_file = fs_.root_path_ + time_buf + ".data";
+                if (delete_file.size() != dummyfname.size()) {
+                    LOG(INFO) << "Garbage Clean, error, max delete file " << delete_file << ", unkown";
+                    continue;
+                }
+
+                if (filename < delete_file) {
+                    fs_.env_->DeleteFile(filename);
+                }
+
+            } else {
+                LOG(INFO) << "Garbage Clean, unknow file " << filename;
+            }
         }
     }
 }

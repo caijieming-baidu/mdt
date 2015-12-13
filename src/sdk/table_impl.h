@@ -247,6 +247,10 @@ private:
                               const std::string& type_key,
                               std::string* key);
 
+    // gc impl
+    static void* GarbageCleanThreadWrapper(void* arg);
+    void GarbageClean();
+
 private:
     // NOTE： WriteHandle can not operator in race condition
     struct WriteHandle {
@@ -292,6 +296,11 @@ private:
     pthread_t timer_tid_;
     mutable Mutex queue_timer_mu_; // mutex must declare before cv
     CondVar queue_timer_cv_;
+
+    // garbage clean, delete nfs file with ttl
+    pthread_t gc_tid_;
+    volatile bool gc_stop_;
+    uint64_t ttl_;
 };
 
 struct PutContext {

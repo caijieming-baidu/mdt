@@ -33,5 +33,8 @@ DEFINE_bool(enable_qu_range, true, "use qu to filter");
 DEFINE_int64(tera_scan_pack_interval, 50000000, "scan timeout in one round");
 
 // create table param
-DEFINE_int64(tera_table_ttl, 0, "max time to keep data, current time > ttl, delete data");
+DEFINE_int64(tera_table_ttl, 0, "(usec) max time to keep data, current time > ttl, delete data");
+
+// gc
+DEFINE_int64(gc_interval, 3600000, "(ms) time interval between two gc operation");
 
