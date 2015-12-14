@@ -38,3 +38,6 @@ DEFINE_int64(tera_table_ttl, 0, "(usec) max time to keep data, current time > tt
 // gc
 DEFINE_int64(gc_interval, 3600000, "(ms) time interval between two gc operation");
 
+// small span write into tera
+DEFINE_int64(tera_span_size, 0, "(bytes) if span size < tera_span_size, write span into tera");
+

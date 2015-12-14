@@ -24,6 +24,7 @@ namespace mdt {
 
 const std::string kPrimaryTableColumnFamily = "Location";
 const std::string kIndexTableColumnFamily = "PrimaryKey";
+const std::string kTeraValue = "kTeraValue";
 
 ///////////////////////////////
 //      TableImpl class      //
@@ -235,7 +236,8 @@ private:
     void GetAllTimestampTables(std::vector<tera::Table*>* table_list);
     std::string TimeToString(struct timeval* filetime);
     void ParseIndexesFromString(const std::string& index_buffer,
-                                std::multimap<std::string, std::string>* indexes);
+                                std::multimap<std::string, std::string>* indexes,
+                                std::string* value);
     bool TestIndexCondition(const std::vector<IndexConditionExtend>& index_cond_list,
                             const std::multimap<std::string, std::string>& index_list);
 

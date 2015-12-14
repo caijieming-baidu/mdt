@@ -30,6 +30,7 @@ DECLARE_bool(enable_qu_range);
 DECLARE_int64(tera_scan_pack_interval);
 DECLARE_int64(tera_table_ttl);
 DECLARE_int64(gc_interval);
+DECLARE_int64(tera_span_size);
 
 namespace mdt {
 
@@ -551,6 +552,14 @@ int TableImpl::WriteIndexTable(const StoreRequest* req, StoreResponse* resp,
         index_pack.append(index_name);
         index_pack.append(":");
         index_pack.append(typed_index_key);
+    }
+    // write small span into tera, tera value MUST in the last
+    if (req->data.size() <= (uint32_t)FLAGS_tera_span_size) {
+        uint32_t value_len = kTeraValue.size() + 1 + req->data.size();
+        index_pack.append((char*)&value_len, sizeof(value_len));
+        index_pack.append(kTeraValue);
+        index_pack.append(":");
+        index_pack.append(req->data);
     }
 
     // update primary table
@@ -1444,20 +1453,24 @@ void TableImpl::ReadData(tera::RowReader* reader) {
     // check break
     should_break = BreakOrPushData(param, param->result, Status::OK(), "", "");
 
-    std::vector<FileLocation> locations;
+    std::vector<std::pair<FileLocation, std::string> > value_locations;
     std::multimap<std::string, std::string> indexes;
     while (!reader->Done()) {
         // check break
         should_break = BreakOrPushData(param, param->result, Status::OK(), "", "");
         if (should_break) { break; }
+        std::pair<FileLocation, std::string> item;
 
         const std::string& location_buffer = reader->Qualifier();
-        FileLocation location;
+        FileLocation& location = item.first;
         location.ParseFromString(location_buffer);
-        locations.push_back(location);
 
         const std::string& index_buffer = reader->Value();
-        ParseIndexesFromString(index_buffer, &indexes);
+        item.second.clear();
+        ParseIndexesFromString(index_buffer, &indexes, &(item.second));
+
+        value_locations.push_back(item);
+
         reader->Next();
     }
 
@@ -1465,10 +1478,22 @@ void TableImpl::ReadData(tera::RowReader* reader) {
     VLOG(12) << "test indexes of primary key: " << primary_key;
     if (!should_break && (TestIndexCondition(param->index_cond_list, indexes))) {
         VLOG(12) << "read data of primary key: " << primary_key;
-        for (size_t i = 0; i < locations.size(); ++i) {
-            FileLocation& location = locations[i];
+        for (size_t i = 0; i < value_locations.size(); ++i) {
+            std::pair<FileLocation, std::string>& item = value_locations[i];
+            FileLocation& location = item.first;
             VLOG(12) << "begin to read data from " << location;
-            std::string data;
+            std::string data = item.second;
+            // data in tera, get it, else get from filesystem
+            if (data.size()) {
+                VLOG(12) << "finish read data from tera";
+                // check break
+                should_break = BreakOrPushData(param, param->result, Status::OK(), data, "");
+                if (should_break) { break; }
+                nr_record++;
+                continue;
+            }
+
+            // get data from filesystem
             Status s = param->table->ReadDataFromFile(location, &data);
             if (s.ok()) {
                 VLOG(12) << "finish read data from " << location;
@@ -1502,7 +1527,8 @@ void TableImpl::ReadData(tera::RowReader* reader) {
 }
 
 void TableImpl::ParseIndexesFromString(const std::string& index_buffer,
-                                       std::multimap<std::string, std::string>* indexes) {
+                                       std::multimap<std::string, std::string>* indexes,
+                                       std::string* value) {
     const char* buf = index_buffer.data();
     uint32_t left = index_buffer.size();
     while (left > sizeof(uint32_t)) {
@@ -1519,9 +1545,15 @@ void TableImpl::ParseIndexesFromString(const std::string& index_buffer,
             break;
         }
 
+        // NOTE: tera value must in the last item
         std::string index_name(buf, delim - buf);
         std::string index_key(delim + 1, buf + index_len - delim - 1);
-        indexes->insert(std::pair<std::string, std::string>(index_name, index_key));
+        // try get data from tera
+        if (index_name == kTeraValue) {
+            *value = index_key;
+        } else {
+            indexes->insert(std::pair<std::string, std::string>(index_name, index_key));
+        }
         buf += index_len;
         left -= index_len;
     }
@@ -1961,8 +1993,10 @@ TableImpl::WriteHandle* TableImpl::GetWriteHandle() {
     return write_handle;
 }
 
+// fail tolerant filesystem error, and small span write tera
 int DataWriter::AddRecord(const std::string& data, FileLocation* location) {
-    Status s = file_->Append(data);
+    Status s;
+    s = file_->Append(data);
     if (!s.ok()) {
         return -1;
     }
