@@ -167,6 +167,9 @@ private:
     Status Init();
     void CleanerThread(tera::ResultStream* stream);
 
+    // filesystem async reader
+    void AsyncRead(void* async_read_param);
+
     // write op
     int InternalBatchWrite(WriteContext* context, std::vector<WriteContext*>& ctx_queue);
     static void* TimerThreadWrapper(void* arg);
@@ -266,6 +269,7 @@ private:
     ThreadPool thread_pool_;
     // async cleaner
     ThreadPool cleaner_thread_;
+    ThreadPool async_read_thread_;
 
     // file handle cache relative
     mutable Mutex file_mutex_;
