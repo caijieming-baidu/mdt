@@ -77,6 +77,7 @@ Status TableImpl::Init() {
     // init write handle list
     nr_write_handle_ = (int)FLAGS_concurrent_write_handle_num;
     cur_write_handle_id_ = 0;
+    cur_write_handle_seq_ = 0;
     write_handle_list_.clear();
     WriteHandle write_handle;
     write_handle.write_queue_.clear();

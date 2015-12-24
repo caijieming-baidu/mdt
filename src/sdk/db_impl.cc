@@ -129,6 +129,7 @@ Status DatabaseImpl::Init() {
     // multi client
     if (FLAGS_multi_table_enable) {
         for (int32_t i = 0; i < FLAGS_multi_table_nr; i++) {
+            LOG(INFO) << "multi client " << FLAGS_multi_table_nr << ", idx " << i;
             std::ostringstream ss;
             ss << "mdt";
             ss << i;
