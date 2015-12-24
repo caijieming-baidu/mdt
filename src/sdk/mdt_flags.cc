@@ -23,7 +23,32 @@ DEFINE_int64(request_queue_flush_internal, 10, "the number of ms wait before flu
 DEFINE_int64(max_timestamp_table_num, 10,  "num of timestamp index table");
 
 // read ops param
-DEFINE_int64(read_file_thread_num, 100,  "num of read file threads");
+DEFINE_int64(read_file_thread_num, 50,  "num of read file threads");
+DEFINE_int64(cleaner_thread_num, 5,  "num of cleaner threads");
 // read row with timestamp
 DEFINE_bool(enable_multi_version_read, false, "enable search specify time version primary key row");
 DEFINE_bool(read_by_index_filter, true, "read by index filter instead of index merger");
+DEFINE_bool(enable_scan_control, false, "if true, batch scan in limit number");
+DEFINE_int64(batch_scan_buffer_size, 1048576, "scan buffer size");
+DEFINE_bool(enable_qu_range, true, "use qu to filter");
+DEFINE_int64(tera_scan_pack_interval, 50000000, "scan timeout in one round");
+DEFINE_bool(enable_number_limit, true, "use scan number limit");
+DEFINE_int64(scan_number_limit, 30, "number of scan limit");
+
+DEFINE_bool(enable_async_read, true, "use multithread for async filesystem read");
+DEFINE_int64(async_read_thread_num, 50,  "num of async read threads");
+
+// create table param
+DEFINE_int64(tera_table_ttl, 604800, "(sec) max time to keep data, current time > ttl, delete data");
+
+// gc
+DEFINE_int64(gc_interval, 3600000, "(ms) time interval between two gc operation");
+DEFINE_bool(delete_unknow_file, false, "delete unknow file");
+
+// small span write into tera
+DEFINE_int64(tera_span_size, 0, "(bytes) if span size < tera_span_size, write span into tera");
+
+// multi table impl
+DEFINE_bool(multi_table_enable, true, "use multi table enhance write");
+DEFINE_int32(multi_table_nr, 10, "number of tableimpl");
+

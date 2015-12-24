@@ -121,7 +121,9 @@ void LogProtoBuf(const std::string& primary_key_name, ::google::protobuf::Messag
     for (int i = 0; i < descriptor->field_count(); i++) {
         const ::google::protobuf::FieldDescriptor* field = descriptor->field(i);
         const ::google::protobuf::Reflection* reflection = message->GetReflection();
-        if (field == NULL || !reflection->HasField(*message, field)) continue;
+        if (field == NULL ||
+            (field->label() == ::google::protobuf::FieldDescriptor::LABEL_REPEATED) ||
+            !reflection->HasField(*message, field)) continue;
         // set primary key
         if (primary_key_name == field->name()) {
             req->set_primary_key(TraceModule::GetFieldValue(message, field));

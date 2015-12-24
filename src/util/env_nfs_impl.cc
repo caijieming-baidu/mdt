@@ -22,7 +22,7 @@ public:
         :fs_(fs), filename_(fname), file_(NULL) {
         fs_->Delete(filename_);
         file_ = fs_->OpenFile(filename_, WRONLY);
-        assert(file_);
+        //assert(file_);
     }
 
     virtual ~DfsWritableFile() {
@@ -37,6 +37,10 @@ public:
     }
 
     Status Append(const Slice& data) {
+        if (file_ == NULL) {
+            return Status::IOError("no such file");
+        }
+
         const char* src = data.data();
         size_t size = data.size();
 
@@ -50,6 +54,9 @@ public:
     Status Flush() {return Status::OK();}
 
     Status Sync() {
+        if (file_ == NULL) {
+            return Status::IOError("no such file");
+        }
         Status s;
         if (file_->Sync() == -1) {
             s = IOError(filename_, errno);
@@ -98,6 +105,10 @@ public:
     }
 
     Status Read(size_t n, Slice* result, char* scratch) {
+        if (file_ == NULL) {
+            return Status::IOError("no such file");
+        }
+
         now_pos_ = -1;
         Status s;
         int32_t bytes_read = file_->Read(scratch, (int32_t)n);
@@ -113,6 +124,10 @@ public:
     }
 
     Status Read(uint64_t offset, size_t n, Slice* result, char* scratch) const {
+        if (file_ == NULL) {
+            return Status::IOError("no such file");
+        }
+
         Status s;
         int32_t bytes_read = file_->Pread(offset, scratch, n);
         LOG(INFO) << "nfs pread: offset " << offset  << ", size " << n
@@ -125,6 +140,10 @@ public:
     }
 
     virtual Status Skip(uint64_t n) {
+        if (file_ == NULL) {
+            return Status::IOError("no such file");
+        }
+
         int64_t current = file_->Tell();
         if (current < 0) {
             return IOError(filename_, errno);
@@ -146,6 +165,9 @@ private:
     }
 
     int64_t fileSize() {
+        if (file_ == NULL) {
+            return -1;
+        }
         uint64_t size = 0;
         fs_->GetFileSize(filename_, &size);
         return size;
@@ -214,19 +236,34 @@ public:
     }
 
     virtual bool FileExists(const std::string& fname) {
+        if (dfs_ == NULL) {
+            LOG(ERROR) << "nfs no mount, " << fname;
+            return false;
+        }
+
         return (0 == dfs_->Exists(fname));
     }
 
     virtual Status GetChildren(const std::string& dir,
             std::vector<std::string>* result,
             std::vector<int64_t>* ctime = NULL) {
+        if (dfs_ == NULL) {
+            LOG(ERROR) << "nfs no mount, " << dir;
+            return IOError(dir, 6);
+        }
+
         if (0 != dfs_->ListDirectory(dir, result, ctime)) {
-            abort();
+            LOG(ERROR) << "nfs cannot list dir, " << dir;
         }
         return Status::OK();
     }
 
     virtual Status DeleteFile(const std::string& fname) {
+        if (dfs_ == NULL) {
+            LOG(ERROR) << "nfs no mount, " << fname;
+            return IOError(fname, 6);
+        }
+
         if (dfs_->Delete(fname) == 0) {
             return Status::OK();
         }
@@ -234,6 +271,11 @@ public:
     }
 
     virtual Status CreateDir(const std::string& dirname) {
+        if (dfs_ == NULL) {
+            LOG(ERROR) << "nfs no mount, " << dirname;
+            return IOError(dirname, 6);
+        }
+
         if (dfs_->CreateDirectory(dirname) == 0) {
             return Status::OK();
         }
@@ -241,6 +283,11 @@ public:
     }
 
     virtual Status DeleteDir(const std::string& dirname) {
+        if (dfs_ == NULL) {
+            LOG(ERROR) << "nfs no mount, " << dirname;
+            return IOError(dirname, 6);
+        }
+
         if (dfs_->DeleteDirectory(dirname) == 0) {
             return Status::OK();
         }
@@ -249,6 +296,11 @@ public:
 
     virtual Status CopyFile(const std::string& from,
                             const std::string& to) {
+        if (dfs_ == NULL) {
+            LOG(ERROR) << "nfs no mount, rename " << from << ", " << to;
+            return IOError(from, 6);
+        }
+
         if (from != to && dfs_->Copy(from, to) != 0) {
             return Status::IOError("DFS Copy", from);
         }

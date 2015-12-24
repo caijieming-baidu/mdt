@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include <iostream>
-
+#include <sstream>
 #include "sdk/sdk.h"
 #include "sdk/db_impl.h"
 #include <tera.h>
@@ -17,6 +17,9 @@ DECLARE_string(tera_root_dir);
 DECLARE_string(tera_flag_file_path);
 DECLARE_string(database_root_dir);
 DECLARE_int64(max_timestamp_table_num);
+DECLARE_int64(tera_table_ttl);
+DECLARE_bool(multi_table_enable);
+DECLARE_int32(multi_table_nr);
 
 namespace mdt {
 
@@ -123,6 +126,24 @@ Status DatabaseImpl::Init() {
         FLAGS_flagfile = local_flagfile;
         return Status::IOError("tera client new error");
     }
+    // multi client
+    if (FLAGS_multi_table_enable) {
+        for (int32_t i = 0; i < FLAGS_multi_table_nr; i++) {
+            LOG(INFO) << "multi client " << FLAGS_multi_table_nr << ", idx " << i;
+            std::ostringstream ss;
+            ss << "mdt";
+            ss << i;
+            std::string client_name = ss.str();
+            tera::Client* tera_client = tera::Client::NewClient(tera_opt_.tera_flag_, client_name, &error_code);
+            if (tera_client == NULL) {
+                LOG(INFO) << "open db, new cli error, tera flag " << tera_opt_.tera_flag_;
+                FLAGS_flagfile = local_flagfile;
+                return Status::IOError("tera client new error");
+            }
+            tera_opt_.extra_client_.push_back(tera_client);
+        }
+    }
+
     FLAGS_flagfile = local_flagfile;
 
     // create db schema table (kv mode)
@@ -171,11 +192,12 @@ Status DatabaseImpl::CreateTable(const TableDescription& table_desc) {
     tera::TableDescriptor primary_table_desc(primary_table_name);
     LOG(INFO) << "Create primary table name " << primary_table_name;
     primary_table_desc.SetRawKey(tera::kBinary);
+    primary_table_desc.SetSplitSize(10240);
     tera::LocalityGroupDescriptor* lg = primary_table_desc.AddLocalityGroup("lg");
     lg->SetBlockSize(32 * 1024);
     lg->SetCompress(tera::kSnappyCompress);
     tera::ColumnFamilyDescriptor* cf = primary_table_desc.AddColumnFamily("Location", "lg");
-    cf->SetTimeToLive(0);
+    cf->SetTimeToLive(FLAGS_tera_table_ttl);
     tera_adapter_.opt_.client_->CreateTable(primary_table_desc, &error_code);
 
     // create index key table
@@ -187,11 +209,12 @@ Status DatabaseImpl::CreateTable(const TableDescription& table_desc) {
         LOG(INFO) << "Create index table name " << index_table_name;
         tera::TableDescriptor index_table_desc(index_table_name);
         index_table_desc.SetRawKey(tera::kBinary);
+        index_table_desc.SetSplitSize(10240);
         tera::LocalityGroupDescriptor* index_lg = index_table_desc.AddLocalityGroup("lg");
         index_lg->SetBlockSize(32 * 1024);
         index_lg->SetCompress(tera::kSnappyCompress);
         tera::ColumnFamilyDescriptor* index_cf = index_table_desc.AddColumnFamily("PrimaryKey", "lg");
-        index_cf->SetTimeToLive(0);
+        index_cf->SetTimeToLive(FLAGS_tera_table_ttl);
         tera_adapter_.opt_.client_->CreateTable(index_table_desc, &error_code);
     }
 
@@ -204,11 +227,12 @@ Status DatabaseImpl::CreateTable(const TableDescription& table_desc) {
         LOG(INFO) << "Create index table name " << index_table_name;
         tera::TableDescriptor index_table_desc(index_table_name);
         index_table_desc.SetRawKey(tera::kBinary);
+        index_table_desc.SetSplitSize(10240);
         tera::LocalityGroupDescriptor* index_lg = index_table_desc.AddLocalityGroup("lg");
         index_lg->SetBlockSize(32 * 1024);
         index_lg->SetCompress(tera::kSnappyCompress);
         tera::ColumnFamilyDescriptor* index_cf = index_table_desc.AddColumnFamily("PrimaryKey", "lg");
-        index_cf->SetTimeToLive(0);
+        index_cf->SetTimeToLive(FLAGS_tera_table_ttl);
         tera_adapter_.opt_.client_->CreateTable(index_table_desc, &error_code);
     }
 
@@ -240,11 +264,19 @@ Status DatabaseImpl::OpenTable(const std::string& table_name, Table** table_ptr)
         return Status::OK();
     }
 
-    // construct memory structure
-    TableImpl::OpenTable(db_name_, tera_opt_, fs_opt_, table_desc, table_ptr);
-    if (*table_ptr == NULL) {
-        return Status::NotFound("db open error ");
+    if (FLAGS_multi_table_enable) {
+        MultiTableImpl::OpenTable(db_name_, tera_opt_, fs_opt_, table_desc, table_ptr);
+        if (*table_ptr == NULL) {
+            return Status::NotFound("db open error ");
+        }
+    } else {
+        // construct memory structure
+        TableImpl::OpenTable(db_name_, tera_opt_, fs_opt_, table_desc, table_ptr);
+        if (*table_ptr == NULL) {
+            return Status::NotFound("db open error ");
+        }
     }
+
     table_map_[table_name] = *table_ptr;
     return Status::OK();
 }

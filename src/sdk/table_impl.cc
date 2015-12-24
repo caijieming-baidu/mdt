@@ -22,8 +22,21 @@ DECLARE_int64(write_batch_queue_size);
 DECLARE_int64(request_queue_flush_internal);
 DECLARE_int64(max_timestamp_table_num);
 DECLARE_int64(read_file_thread_num);
+DECLARE_int64(cleaner_thread_num);
 DECLARE_bool(enable_multi_version_read);
 DECLARE_bool(read_by_index_filter);
+DECLARE_bool(enable_scan_control);
+DECLARE_int64(batch_scan_buffer_size);
+DECLARE_bool(enable_qu_range);
+DECLARE_int64(tera_scan_pack_interval);
+DECLARE_bool(enable_number_limit);
+DECLARE_int64(scan_number_limit);
+DECLARE_bool(enable_async_read);
+DECLARE_int64(async_read_thread_num);
+DECLARE_int64(tera_table_ttl);
+DECLARE_int64(gc_interval);
+DECLARE_int64(tera_span_size);
+DECLARE_bool(delete_unknow_file);
 
 namespace mdt {
 
@@ -58,9 +71,13 @@ Status TableImpl::Init() {
     // create fs dir
     fs_.env_->CreateDir(fs_.root_path_);
 
+    // read cache
+    seq_cnt_ = 1;
+
     // init write handle list
     nr_write_handle_ = (int)FLAGS_concurrent_write_handle_num;
     cur_write_handle_id_ = 0;
+    cur_write_handle_seq_ = 0;
     write_handle_list_.clear();
     WriteHandle write_handle;
     write_handle.write_queue_.clear();
@@ -140,10 +157,17 @@ TableImpl::TableImpl(const TableDescription& table_desc,
     tera_(tera_adapter),
     fs_(fs_adapter),
     thread_pool_(FLAGS_read_file_thread_num),
+    cleaner_thread_(FLAGS_cleaner_thread_num),
+    async_read_thread_(FLAGS_async_read_thread_num),
     queue_timer_stop_(false),
     queue_timer_cv_(&queue_timer_mu_) {
     // create timer
     pthread_create(&timer_tid_, NULL, &TableImpl::TimerThreadWrapper, this);
+
+    // create gc
+    ttl_ = FLAGS_tera_table_ttl;
+    gc_stop_ = false;
+    pthread_create(&gc_tid_, NULL, &TableImpl::GarbageCleanThreadWrapper, this);
 }
 
 TableImpl::~TableImpl() {
@@ -152,6 +176,9 @@ TableImpl::~TableImpl() {
     // TODO: write queue release
     thread_pool_.Stop(false);
     FreeTeraTable();
+
+    cleaner_thread_.Stop(false);
+    async_read_thread_.Stop(false);
 
     // stop timer, flush request
     queue_timer_mu_.Lock();
@@ -167,7 +194,16 @@ TableImpl::~TableImpl() {
         InternalBatchWrite(context, local_queue);
         delete context;
     }
+
+    // gc stop
+    gc_stop_ = true;
+    //pthread_join(gc_tid_, NULL);
     return;
+}
+
+void TableImpl::CleanerThread(tera::ResultStream* stream) {
+    delete stream;
+    VLOG(30) << "do something to clean up";
 }
 
 /////////  batch write /////////////
@@ -534,6 +570,14 @@ int TableImpl::WriteIndexTable(const StoreRequest* req, StoreResponse* resp,
         index_pack.append(":");
         index_pack.append(typed_index_key);
     }
+    // write small span into tera, tera value MUST in the last
+    if (req->data.size() <= (uint32_t)FLAGS_tera_span_size) {
+        uint32_t value_len = kTeraValue.size() + 1 + req->data.size();
+        index_pack.append((char*)&value_len, sizeof(value_len));
+        index_pack.append(kTeraValue);
+        index_pack.append(":");
+        index_pack.append(req->data);
+    }
 
     // update primary table
     std::string primary_key;
@@ -732,7 +776,7 @@ Status TableImpl::GetByPrimaryKey(const std::string& primary_key,
     ResultStream result;
     Status s = GetSingleRow(primary_key, &result,
                             start_timestamp, end_timestamp,
-                            NULL, NULL, NULL);
+                            NULL, NULL, NULL, NULL);
     if (s.ok()) {
         result_list->push_back(result);
     }
@@ -778,13 +822,16 @@ Status TableImpl::GetByTimestamp(int64_t start_timestamp, int64_t end_timestamp,
         tera::ScanDescriptor* scan_desc = new tera::ScanDescriptor(start_ts_key);
         scan_desc->SetEnd(end_ts_key + '\0');
         scan_desc->AddColumnFamily(kIndexTableColumnFamily);
+	if (FLAGS_enable_number_limit) {
+	    scan_desc->SetNumberLimit(FLAGS_scan_number_limit);
+	}
 
         VLOG(10) << "scan timestamp table: " << i;
         tera::ErrorCode err;
         tera::ResultStream* result = ts_table->Scan(*scan_desc, &err);
 
         std::vector<std::string> primary_key_list;
-        while ((int32_t)result_list->size() < limit && !result->Done()) {
+        while ((int32_t)result_list->size() < limit && !result->Done(&err)) {
             const std::string& primary_key = result->Qualifier();
             VLOG(12) << "select op, primary key: " << primary_key;
 
@@ -801,12 +848,13 @@ Status TableImpl::GetByTimestamp(int64_t start_timestamp, int64_t end_timestamp,
             result->Next();
         }
         if (primary_key_list.size() > 0) {
-            CHECK(result->Done());
+            //CHECK(result->Done(&err));
             CHECK_LT((int32_t)result_list->size(), limit);
             GetRows(primary_key_list, limit - result_list->size(),
                     result_list);
         }
-        delete result;
+        //delete result;
+	cleaner_thread_.AddTask(boost::bind(&TableImpl::CleanerThread, this, result));
         delete scan_desc;
     }
 
@@ -941,6 +989,19 @@ Status TableImpl::GetByExtendIndex(const std::vector<IndexConditionExtend>& inde
 
         scan_desc->AddColumnFamily(kIndexTableColumnFamily);
         scan_desc->SetTimeRange(end_timestamp, start_timestamp);
+        if (FLAGS_enable_qu_range) {
+            char sbuf[8], ebuf[8];
+            EncodeBigEndian(sbuf, start_timestamp);
+            EncodeBigEndian(ebuf, end_timestamp);
+            std::string start_qu(sbuf, sizeof(sbuf));
+            std::string end_qu(ebuf, sizeof(ebuf));
+            scan_desc->AddQualifierRange(kIndexTableColumnFamily, start_qu, end_qu);
+        }
+	if (FLAGS_enable_number_limit) {
+	    scan_desc->SetNumberLimit(FLAGS_scan_number_limit);
+	}
+        scan_desc->SetBufferSize(FLAGS_batch_scan_buffer_size);
+        scan_desc->SetPackInterval(FLAGS_tera_scan_pack_interval);
 
         index_table_vec[valid_nr_index_table] = index_table;
         scan_desc_vec[valid_nr_index_table] = scan_desc;
@@ -949,14 +1010,18 @@ Status TableImpl::GetByExtendIndex(const std::vector<IndexConditionExtend>& inde
     }
 
     if (FLAGS_read_by_index_filter) {
-        Mutex mutex;
-        int32_t counter = 0; // num of primary data read totally
-        bool finish = false; // set true after any index table scanned done
+        MultiIndexParam* multi_param = new MultiIndexParam;
+        multi_param->limit = limit;
+        multi_param->counter = 0;// num of primary data read totally
+        multi_param->finish = false; // set true after any index table scanned done
+        multi_param->ref = valid_nr_index_table;
+
         std::map<std::string, ResultStream> result_map;
         ThreadPool scan_threads(valid_nr_index_table);
         for (int i = 0; i < valid_nr_index_table; i++) {
-            scan_threads.AddTask(boost::bind(&TableImpl::GetByFilterIndex, this, index_table_vec[i],
-                                             scan_desc_vec[i], limit, &mutex, &counter, &finish,
+            scan_threads.AddTask(boost::bind(&TableImpl::GetByFilterIndex, this,
+                                             index_table_vec[i], scan_desc_vec[i],
+                                             multi_param,
                                              &index_condition_ex_list, &result_map));
         }
         scan_threads.Stop(true);
@@ -986,60 +1051,110 @@ Status TableImpl::GetByExtendIndex(const std::vector<IndexConditionExtend>& inde
 }
 
 struct FilterIndexParam {
-    Mutex* mutex;
+    MultiIndexParam* multi_param;
+    int32_t pending_count;
+    int32_t user_leave;
+    CondVar cond;
 
-    // statistics
-    int32_t* counter;
-    int32_t* got_count;
-
-    // use for wakeup caller
-    CondVar* cond;
-    int32_t* pending_count;
+    FilterIndexParam(MultiIndexParam* param)
+        : multi_param(param), user_leave(0), cond(&(multi_param->mutex)) {}
 };
 
 void FilterIndexCallback(Status s, ResultStream* result, void* callback_param) {
     FilterIndexParam* param = (FilterIndexParam*)callback_param;
-    MutexLock l(param->mutex);
+    MultiIndexParam* multi_param = param->multi_param;
+    multi_param->mutex.Lock();
     if (s.ok()) {
-        ++(*param->counter);
-        ++(*param->got_count);
+        ++(multi_param->counter);
     }
-    --(*param->pending_count);
-    VLOG(12) << "filter index callback, priamry key " << result->primary_key
-	<< ", pending_count " << (*param->pending_count);
-    if ((*param->pending_count) == 0) {
-        param->cond->Signal();
+    --(param->pending_count);
+    // if user not leave:
+    //  1. result enough should wakeup user
+    //  2. last callback should wakeup user
+    if (param->user_leave == 0) {
+        if ((multi_param->counter >= multi_param->limit) || (param->pending_count == 1)) {
+            param->cond.Signal();
+        }
+    } else {
+        // if user leave, last callback should free param
+        if (param->pending_count == 0) {
+            delete param;
+
+            // last index searcher free multi_param
+            multi_param->ref--;
+            if (multi_param->ref == 0) {
+                multi_param->mutex.Unlock();
+                delete multi_param;
+                return;
+            }
+        }
     }
-    delete param;
+    multi_param->mutex.Unlock();
+}
+
+bool FilterIndexBreak(Status s, ResultStream* result, void* callback_param,
+                      const std::string& data,
+                      const std::string& primary_key) {
+    FilterIndexParam* param = (FilterIndexParam*)callback_param;
+    MultiIndexParam* multi_param = param->multi_param;
+    MutexLock l(&multi_param->mutex);
+    if (multi_param->counter >= multi_param->limit) {
+        return true;
+    }
+
+    // enqueue data in lock
+    if (s.ok() && (data.size() > 0)) {
+        result->result_data_list.push_back(data);
+    }
+    if (s.ok() && (primary_key.size() > 0)) {
+        result->primary_key = primary_key;
+    }
+    return false;
 }
 
 void TableImpl::GetByFilterIndex(tera::Table* index_table,
                                  tera::ScanDescriptor* scan_desc,
-                                 int32_t limit, Mutex* mutex, int32_t* counter, bool* finish,
+                                 MultiIndexParam* multi_param,
                                  const std::vector<IndexConditionExtend>* index_cond_list,
                                  std::map<std::string, ResultStream>* results) {
     tera::ErrorCode err;
     tera::ResultStream* stream = index_table->Scan(*scan_desc, &err);
-    CHECK_NOTNULL(stream);
-    int32_t got_count = 0;
-    int32_t pending_count = 0;
-    CondVar cond(mutex);
+    if (stream == NULL) {
+        VLOG(5) << "new scan stream error\n";
+
+        multi_param->mutex.Lock();
+        // last index searcher free multi_param
+        multi_param->ref--;
+        if (multi_param->ref == 0) {
+            multi_param->mutex.Unlock();
+            delete multi_param;
+            return;
+        }
+        multi_param->mutex.Unlock();
+        return;
+    }
 
     // filter by timestamp
     VLOG(10) << "begin scan index: " << index_table->GetName();
-    while (!stream->Done()) {
+    FilterIndexParam* param = new FilterIndexParam(multi_param);
+    param->pending_count = 1;
+    while (!stream->Done(&err)) {
+        // skip 8 bytes's ts
         std::string primary_key(stream->Qualifier(), 8, std::string::npos);
         {
-            MutexLock l(mutex);
-            // :(,  compile optimistic may cause error
-            int32_t* pending_count_ptr = &pending_count;
-            if ((int32_t)(*pending_count_ptr) >= limit) {
-                // if has limit getrow flying, wait for finish
-                VLOG(12) << "wait flying GetSingleRow finish, pending count " << *pending_count_ptr
-                    << ", limit " << limit;
-	        while ((int32_t)(*pending_count_ptr) > 0) {cond.Wait();}
+            MutexLock l(&multi_param->mutex);
+            /*
+            if (FLAGS_enable_scan_control) {
+                // :(,  compile optimistic may cause error
+                if (pending_count >= limit) {
+                    // if has limit getrow flying, wait for finish
+                    VLOG(12) << "wait flying GetSingleRow finish, pending count " << pending_count
+                        << ", limit " << limit;
+                    while (pending_count > 0) {cond.Wait();}
+                }
             }
-            if (*finish || *counter >= limit) {
+            */
+            if (multi_param->finish || multi_param->counter >= multi_param->limit) {
                 break;
             }
             if (results->find(primary_key) != results->end()) {
@@ -1048,31 +1163,28 @@ void TableImpl::GetByFilterIndex(tera::Table* index_table,
             }
             VLOG(12) << "select op, primary key: " << DebugString(primary_key);
             (*results)[primary_key].primary_key = ""; // mark as invalid
-            pending_count++;
+            param->pending_count++;
         }
 
-        FilterIndexParam* param = new FilterIndexParam;
-        param->mutex = mutex;
-        param->counter = counter;
-        param->got_count = &got_count;
-        param->pending_count = &pending_count;
-        param->cond = &cond;
         GetSingleRow(primary_key, &(*results)[primary_key],
                      0, (uint64_t)timer::get_micros(),
                      index_cond_list,
-                     FilterIndexCallback, param);
+                     FilterIndexCallback, param,
+                     FilterIndexBreak);
 
         stream->Next();
     }
-    delete stream;
+    // batch scan must wait other rpc callback
+    //delete stream;
+    cleaner_thread_.AddTask(boost::bind(&TableImpl::CleanerThread, this, stream));
 
     // stop other index table scan streams
     {
-        MutexLock l(mutex);
-	if (*finish == false) {
+        MutexLock l(&multi_param->mutex);
+	if (multi_param->finish == false) {
        	    VLOG(10) << "finish scan index: " << index_table->GetName()
                  << ", notify other index table scan streams to stop";
-	    *finish = true;
+	    multi_param->finish = true;
 	}
     }
 
@@ -1080,11 +1192,29 @@ void TableImpl::GetByFilterIndex(tera::Table* index_table,
     VLOG(10) << "finish scan index: " << index_table->GetName()
              << ", wait for background read completion";
     {
-	MutexLock l(mutex);
+        multi_param->mutex.Lock();
         // :(,  compile optimistic may cause error
-        int32_t* pending_count_ptr = &pending_count;
-	while ((int32_t)(*pending_count_ptr) > 0) {cond.Wait();}
-    	VLOG(10) << "finish scan index: " << index_table->GetName() << ", all done, get data_num " << got_count;
+	while (!((param->pending_count == 1) ||
+               (multi_param->counter >= multi_param->limit))) {
+            param->cond.Wait();
+        }
+    	VLOG(10) << "finish scan index: " << index_table->GetName()
+                << ", all done, get data_num " << multi_param->counter;
+        param->user_leave++;
+        param->pending_count--;
+        // if user leave, last callback should free param
+        if (param->pending_count == 0) {
+            delete param;
+
+            // last index searcher free multi_param
+            multi_param->ref--;
+            if (multi_param->ref == 0) {
+                multi_param->mutex.Unlock();
+                delete multi_param;
+                return;
+            }
+        }
+        multi_param->mutex.Unlock();
     }
 }
 
@@ -1133,14 +1263,14 @@ tera::ResultStream* TableImpl::ScanIndexTable(tera::Table* index_table,
                                               tera::ScanDescriptor* scan_desc,
                                               tera::ResultStream* result, int32_t limit,
                                               std::vector<std::string>* primary_key_list) {
+    tera::ErrorCode err;
     CHECK_EQ(primary_key_list->size(), 0U);
     VLOG(10) << "begin scan index: " << index_table->GetName();
     if (result == NULL) {
-        tera::ErrorCode err;
         result = index_table->Scan(*scan_desc, &err);
     }
     CHECK_NOTNULL(result);
-    while (!result->Done() && (int32_t)primary_key_list->size() < limit) {
+    while (!result->Done(&err) && (int32_t)primary_key_list->size() < limit) {
         std::string primary_key(result->Qualifier(), 8, std::string::npos);
         primary_key_list->push_back(primary_key);
         VLOG(12) << "select op, primary key: " << primary_key;
@@ -1267,7 +1397,7 @@ int32_t TableImpl::GetRows(const std::vector<std::string>& primary_key_list, int
 
         GetSingleRow(primary_key_list[i], &tmp_row_list[i],
                      0, (uint64_t)timer::get_micros(),
-                     NULL, GetRowCallback, param);
+                     NULL, GetRowCallback, param, NULL);
     }
 
     MutexLock l(&mutex);
@@ -1292,10 +1422,11 @@ int32_t TableImpl::GetRows(const std::vector<std::string>& primary_key_list, int
 
 struct ReadPrimaryTableContext {
     TableImpl* table;
-    ResultStream* result;
-    const std::vector<IndexConditionExtend>* index_cond_list;
+    std::vector<IndexConditionExtend> index_cond_list;
     void* user_callback;
+    void* user_break_func; // break read primary table
     void* user_param;
+    ResultStream* result; // user context
 
     // useful if user_callback == NULL
     Mutex* mutex;
@@ -1314,6 +1445,24 @@ void ReleaseReadPrimaryTableContext(ReadPrimaryTableContext* param, ResultStream
     delete param;
 }
 
+bool BreakOrPushData(ReadPrimaryTableContext* param, ResultStream* result, Status s,
+                           const std::string& data, const std::string& primary_key) {
+    bool should_break = false;
+    if (param->user_break_func != NULL) {
+        should_break = ((GetSingleRowBreak*)param->user_break_func)(s, result, param->user_param,
+                                            data, primary_key);
+    } else {
+        // enqueue data in lock
+        if (s.ok() && (data.size() > 0)) {
+            result->result_data_list.push_back(data);
+        }
+        if (s.ok() && (primary_key.size() > 0)) {
+            result->primary_key = primary_key;
+        }
+    }
+    return should_break;
+}
+
 void TableImpl::ReadPrimaryTableCallback(tera::RowReader* reader) {
     ReadPrimaryTableContext* param = (ReadPrimaryTableContext*)reader->GetContext();
     const std::string& primary_key = reader->RowName();
@@ -1322,47 +1471,127 @@ void TableImpl::ReadPrimaryTableCallback(tera::RowReader* reader) {
     param->table->thread_pool_.AddTask(boost::bind(&TableImpl::ReadData, param->table, reader));
 }
 
+struct AsyncReadParam {
+    ReadPrimaryTableContext* param;
+    FileLocation* location;
+    Mutex* lock;
+    CondVar* cond;
+    int* nr_record;
+    Counter* nr_reader;
+};
 void TableImpl::ReadData(tera::RowReader* reader) {
     ReadPrimaryTableContext* param = (ReadPrimaryTableContext*)reader->GetContext();
     const std::string& primary_key = reader->RowName();
+    bool should_break = false;
 
-    std::vector<FileLocation> locations;
+    // check break
+    should_break = BreakOrPushData(param, param->result, Status::OK(), "", "");
+
+    std::vector<std::pair<FileLocation, std::string> > value_locations;
     std::multimap<std::string, std::string> indexes;
     while (!reader->Done()) {
+        // check break
+        should_break = BreakOrPushData(param, param->result, Status::OK(), "", "");
+        if (should_break) { break; }
+        std::pair<FileLocation, std::string> item;
+
         const std::string& location_buffer = reader->Qualifier();
-        FileLocation location;
+        FileLocation& location = item.first;
         location.ParseFromString(location_buffer);
-        locations.push_back(location);
 
         const std::string& index_buffer = reader->Value();
-        ParseIndexesFromString(index_buffer, &indexes);
+        item.second.clear();
+        ParseIndexesFromString(index_buffer, &indexes, &(item.second));
+
+        value_locations.push_back(item);
+
         reader->Next();
     }
 
-    ResultStream* result = param->result;
+    int nr_record = 0;
     VLOG(12) << "test indexes of primary key: " << primary_key;
-    if (param->index_cond_list == NULL || TestIndexCondition(*param->index_cond_list, indexes)) {
+    if (!should_break && (TestIndexCondition(param->index_cond_list, indexes))) {
         VLOG(12) << "read data of primary key: " << primary_key;
-        for (size_t i = 0; i < locations.size(); ++i) {
-            FileLocation& location = locations[i];
-            VLOG(12) << "begin to read data from " << location;
-            std::string data;
-            Status s = param->table->ReadDataFromFile(location, &data);
-            if (s.ok()) {
-                VLOG(12) << "finish read data from " << location;
-                result->result_data_list.push_back(data);
-            } else {
-                LOG(WARNING) << "fail to read data from " << location << " error: " << s.ToString();
+        // sync filesystem read
+        if (!FLAGS_enable_async_read) {
+            for (size_t i = 0; i < value_locations.size(); ++i) {
+            	std::pair<FileLocation, std::string>& item = value_locations[i];
+            	FileLocation& location = item.first;
+                VLOG(12) << "begin to read data from " << location;
+            	std::string data = item.second;
+		// data in tera, get it, else get from filesystem
+		if (data.size()) {
+		    VLOG(12) << "finish read data from tera";
+		    // check break
+		    should_break = BreakOrPushData(param, param->result, Status::OK(), data, "");
+		    if (should_break) { break; }
+		    nr_record++;
+		    continue;
+		}
+
+		// get data from filesystem
+		Status s = param->table->ReadDataFromFile(location, &data);
+                if (s.ok()) {
+                    VLOG(12) << "finish read data from " << location;
+                    // check break
+                    should_break = BreakOrPushData(param, param->result, Status::OK(), data, "");
+                    if (should_break) { break; }
+                    nr_record++;
+                } else {
+                    LOG(WARNING) << "fail to read data from " << location << " error: " << s.ToString();
+                }
+            }
+        } else {
+            // use async filesystem read
+            Mutex lock;
+            CondVar cond(&lock);
+            Counter nr_reader;
+            nr_reader.Set((uint64_t)(value_locations.size()) + 1);
+
+            for (size_t i = 0; i < value_locations.size(); ++i) {
+            	std::pair<FileLocation, std::string>& item = value_locations[i];
+            	FileLocation& location = item.first;
+            	std::string data = item.second;
+		// data in tera, get it, else get from filesystem
+		if (data.size()) {
+		    VLOG(12) << "finish read data from tera";
+		    // check break
+		    should_break = BreakOrPushData(param, param->result, Status::OK(), data, "");
+		    if (should_break) { break; }
+		    nr_record++;
+		    nr_reader.Dec();
+		    continue;
+		}
+		
+		// get data from filesystem
+                AsyncReadParam* async_read_param = new AsyncReadParam;
+                async_read_param->param = param;
+                async_read_param->lock = &lock;
+                async_read_param->cond = &cond;
+                async_read_param->nr_record = &nr_record;
+                async_read_param->nr_reader = &nr_reader;
+                async_read_param->location = &location;
+                async_read_thread_.AddTask(boost::bind(&TableImpl::AsyncRead, this, async_read_param));
+            }
+            {
+                MutexLock l(&lock);
+		nr_reader.Dec();
+                VLOG(30) << "async read, wait file read finish";
+                while (nr_reader.Get()) {
+                    cond.Wait();
+                }
             }
         }
     }
 
     Status s;
-    if (reader->GetError().GetType() != tera::ErrorCode::kOK) {
+    if (should_break) {
+        s = Status::NotFound("break from read data");
+    } else if (reader->GetError().GetType() != tera::ErrorCode::kOK) {
 	LOG(WARNING) << "tera row reader error, primary key " << primary_key;
         s = Status::IOError("tera error");
-    } else if (result->result_data_list.size() > 0) {
-        result->primary_key = primary_key;
+    } else if (nr_record > 0) {
+        BreakOrPushData(param, param->result, Status::OK(), "", primary_key);
         s = Status::OK();
     } else {
 	LOG(WARNING) << "row not found, priamry key " << primary_key;
@@ -1371,11 +1600,45 @@ void TableImpl::ReadData(tera::RowReader* reader) {
     delete reader;
 
     // trigger user callback
-    ReleaseReadPrimaryTableContext(param, result, s);
+    ReleaseReadPrimaryTableContext(param, param->result, s);
+}
+
+void TableImpl::AsyncRead(void* read_param) {
+    AsyncReadParam* async_read_param = (AsyncReadParam*)read_param;
+    ReadPrimaryTableContext* param = async_read_param->param;
+    FileLocation* location = async_read_param->location;
+    Mutex* lock = async_read_param->lock;
+    CondVar* cond = async_read_param->cond;
+    int* nr_record = async_read_param->nr_record;
+    Counter* nr_reader = async_read_param->nr_reader;
+    delete async_read_param;
+
+    // read from file system
+    VLOG(12) << "begin to async read data from " << *location;
+    std::string data;
+    Status s = param->table->ReadDataFromFile(*location, &data);
+    if (s.ok()) {
+        VLOG(12) << "finish async read data from " << *location;
+        // check break
+        MutexLock l(lock);
+        bool should_break = BreakOrPushData(param, param->result, Status::OK(), data, "");
+        if (!should_break) {
+            (*nr_record)++;
+        }
+    } else {
+        LOG(WARNING) << "fail to async read data from " << *location << " error: " << s.ToString();
+    }
+    {
+        MutexLock l(lock);
+        if (nr_reader->Dec() == 0) {
+            cond->Signal();
+        }
+    }
 }
 
 void TableImpl::ParseIndexesFromString(const std::string& index_buffer,
-                                       std::multimap<std::string, std::string>* indexes) {
+                                       std::multimap<std::string, std::string>* indexes,
+                                       std::string* value) {
     const char* buf = index_buffer.data();
     uint32_t left = index_buffer.size();
     while (left > sizeof(uint32_t)) {
@@ -1392,9 +1655,15 @@ void TableImpl::ParseIndexesFromString(const std::string& index_buffer,
             break;
         }
 
+        // NOTE: tera value must in the last item
         std::string index_name(buf, delim - buf);
         std::string index_key(delim + 1, buf + index_len - delim - 1);
-        indexes->insert(std::pair<std::string, std::string>(index_name, index_key));
+        // try get data from tera
+        if (index_name == kTeraValue) {
+            *value = index_key;
+        } else {
+            indexes->insert(std::pair<std::string, std::string>(index_name, index_key));
+        }
         buf += index_len;
         left -= index_len;
     }
@@ -1471,7 +1740,8 @@ bool TableImpl::TestIndexCondition(const std::vector<IndexConditionExtend>& inde
 Status TableImpl::GetSingleRow(const std::string& primary_key, ResultStream* result,
                                int64_t start_timestamp, int64_t end_timestamp,
                                const std::vector<IndexConditionExtend>* index_cond_list,
-                               GetSingleRowCallback user_callback, void* user_param) {
+                               GetSingleRowCallback user_callback, void* user_param,
+                               GetSingleRowBreak user_break_func) {
     Mutex mu;
     CondVar cond(&mu);
     bool finish = false;
@@ -1481,8 +1751,11 @@ Status TableImpl::GetSingleRow(const std::string& primary_key, ResultStream* res
     ReadPrimaryTableContext* param = new ReadPrimaryTableContext;
     param->table = this;
     param->result = result;
-    param->index_cond_list = index_cond_list;
+    if (index_cond_list) {
+        param->index_cond_list = *index_cond_list;
+    }
     param->user_callback = (void*)user_callback;
+    param->user_break_func = (void*)user_break_func;
     param->user_param = user_param;
     if (user_callback == NULL) {
         param->mutex = &mu;
@@ -1526,6 +1799,7 @@ Status TableImpl::ReadDataFromFile(const FileLocation& location, std::string* da
     if (s.ok()) {
         data->assign(result.data(), result.size());
     }
+    ReleaseDataReader(location.fname_);
     delete[] scratch;
     return s;
 }
@@ -1570,7 +1844,7 @@ void TableImpl::GetAllTimestampTables(std::vector<tera::Table*>* table_list) {
     }
 }
 
-std::string TableImpl::TimeToString() {
+std::string TableImpl::TimeToString(struct timeval* filetime) {
 #ifdef OS_LINUX
     pid_t tid = syscall(SYS_gettid);
 #else
@@ -1597,6 +1871,7 @@ std::string TableImpl::TimeToString() {
             static_cast<int>(now_tv.tv_usec),
             (unsigned long)thread_id);
     std::string time_buf(buf, 33);
+    *filetime = now_tv;
     return time_buf;
 }
 
@@ -1605,10 +1880,21 @@ RandomAccessFile* TableImpl::OpenFileForRead(const std::string& filename) {
     MutexLock l(&file_mutex_);
 
     // get file from cache
-    std::map<std::string, RandomAccessFile*>::iterator it = file_map_.find(filename);
+    std::map<std::string, DataReader>::iterator it = file_map_.find(filename);
     if (it != file_map_.end()) {
+        DataReader& reader = it->second;
+        // update lru
+        std::map<uint64_t, std::string>::iterator lru_it = file_lru_.find(reader.seq_);
+        if (lru_it != file_lru_.end()) {
+            file_lru_.erase(lru_it);
+        }
+        uint64_t seq_no = seq_cnt_++;
+        file_lru_[seq_no] = filename;
+
+        reader.seq_ = seq_no;
+        reader.ref_.Inc();
         VLOG(5) << "find file in cache: " << filename;
-        return it->second;
+        return reader.file_;
     }
 
     // open file
@@ -1625,27 +1911,177 @@ RandomAccessFile* TableImpl::OpenFileForRead(const std::string& filename) {
     VLOG(5) << "open file: " << filename;
     it = file_map_.find(filename);
     if (file_map_.find(filename) == file_map_.end()) {
-        file_map_[filename] = file;
+        uint64_t seq_no = seq_cnt_++;
+        DataReader reader;
+        reader.seq_ = seq_no;
+        reader.file_ = file;
+        reader.ref_.Set(1); // init to be 1
+        reader.ref_.Inc();
+
+        file_map_[filename] = reader;
+        // insert into lru list
+        std::map<uint64_t, std::string>::iterator lru_it = file_lru_.find(reader.seq_);
+        if (lru_it != file_lru_.end()) {
+            file_lru_.erase(lru_it);
+        }
+        file_lru_[seq_no] = filename;
+
+        // try to evict cache if the num of cache item > 1M
+        if (file_lru_.size() > 1000000) {
+            std::map<uint64_t, std::string>::iterator erase_it = file_lru_.begin();
+            // delete top 1000 oldest cache item
+            for (; erase_it != file_lru_.end(); ++ erase_it) {
+                std::map<std::string, DataReader>::iterator file_map_tmp_it = file_map_.find(erase_it->second);
+                if (file_map_tmp_it == file_map_.end()) {
+                    LOG(ERROR) << "file " << erase_it->second << ", seq " << erase_it->first
+                        << ", in lru, not in file map";
+                    file_lru_.erase(erase_it);
+                    break;
+                }
+
+                DataReader& erase_reader = file_map_tmp_it->second;
+                if ((erase_reader.ref_.Get() == 0) || (erase_reader.ref_.Dec() == 0)) {
+                    // do something cleanup
+                    file_lru_.erase(erase_it);
+                    delete erase_reader.file_;
+                    file_map_.erase(file_map_tmp_it);
+                    break;
+                }
+            }
+        }
+
     } else {
         delete file;
-        file = it->second;
+        DataReader& reader = it->second;
+
+        // update lru
+        std::map<uint64_t, std::string>::iterator lru_it = file_lru_.find(reader.seq_);
+        if (lru_it != file_lru_.end()) {
+            file_lru_.erase(lru_it);
+        }
+        uint64_t seq_no = seq_cnt_++;
+        file_lru_[seq_no] = filename;
+
+        reader.seq_ = seq_no;
+        reader.ref_.Inc();
+        file = reader.file_;
     }
     return file;
+}
+
+void TableImpl::ReleaseDataReader(const std::string& filename) {
+    MutexLock l(&file_mutex_);
+    std::map<std::string, DataReader>::iterator it = file_map_.find(filename);
+    if (it != file_map_.end()) {
+        DataReader& reader = it->second;
+
+        if ((reader.ref_.Get() == 0) && (reader.ref_.Dec() == 0)) {
+            // do something cleanup
+            std::map<uint64_t, std::string>::iterator lru_it = file_lru_.find(reader.seq_);
+            if (lru_it != file_lru_.end()) {
+                file_lru_.erase(lru_it);
+            }
+            delete reader.file_;
+            file_map_.erase(it);
+        }
+    }
+}
+
+// gc impl
+void* TableImpl::GarbageCleanThreadWrapper(void* arg) {
+    reinterpret_cast<TableImpl*>(arg)->GarbageClean();
+    return NULL;
+}
+
+void TableImpl::GarbageClean() {
+    struct timeval dummyfiletime;
+    std::string dummyfname = fs_.root_path_ + "/" + TimeToString(&dummyfiletime) + ".data";
+
+    // random sleep
+    /* 
+    struct timeval randtime;
+    gettimeofday(&randtime, NULL);
+    uint64_t sleep_duration = (randtime.tv_usec % 60) * 60000;
+    usleep(sleep_duration);
+    */
+
+    // enable gc
+    while (1) {
+        // handle gc per hour
+        if (gc_stop_ == true) {
+            break;
+        }
+        usleep(FLAGS_gc_interval);
+        if (ttl_ == 0) {
+            continue;
+        }
+
+        std::vector<std::string> result;
+        fs_.env_->GetChildren(fs_.root_path_, &result, NULL);
+
+        for (uint64_t i = 0; i < result.size(); i++) {
+            std::string filename = fs_.root_path_ + "/" + result[i];
+            if (filename.size() == dummyfname.size()) {
+                // ttl check , ttl + 1hour be should index data has been invalid
+                struct timeval now_tv;
+                gettimeofday(&now_tv, NULL);
+                if ((uint64_t)now_tv.tv_sec < (uint64_t)(ttl_ + 3600)) {
+                    continue;
+                }
+
+                const time_t seconds = now_tv.tv_sec - ttl_ - 3600;
+                struct tm t;
+                localtime_r(&seconds, &t);
+                char buf[34];
+                char* p = buf;
+                p += snprintf(p, 34,
+                        "%04d-%02d-%02d-%02d:%02d:%02d.%06d.%06lu",
+                        t.tm_year + 1900,
+                        t.tm_mon + 1,
+                        t.tm_mday,
+                        t.tm_hour,
+                        t.tm_min,
+                        t.tm_sec,
+                        static_cast<int>(0),
+                        (unsigned long)(0));
+                std::string time_buf(buf, 33);
+                std::string delete_file = fs_.root_path_ + "/" + time_buf + ".data";
+                if (delete_file.size() != dummyfname.size()) {
+                    LOG(INFO) << "Garbage Clean, error, max delete file " << delete_file << ", unkown";
+                    continue;
+                }
+		
+                if (filename < delete_file) {
+		    VLOG(30) << "Garbage Clean, ttl " << ttl_ << ", file " << filename << ", delete " << delete_file;
+                    fs_.env_->DeleteFile(filename);
+		}
+
+            } else {
+                LOG(INFO) << "Garbage Clean, unknow file " << filename;
+		if (FLAGS_delete_unknow_file) {
+               	    fs_.env_->DeleteFile(filename);
+		}
+            }
+        }
+    }
 }
 
 // DataWriter Impl
 DataWriter* TableImpl::GetDataWriter(WriteHandle* write_handle) {
     DataWriter* writer = NULL;
+    struct timeval filetime;
     if (write_handle->writer_ && write_handle->writer_->SwitchDataFile()) {
         LOG(INFO) << "data file too large, switch";
         delete write_handle->writer_;
         write_handle->writer_ = NULL;
     }
     if (write_handle->writer_ == NULL) {
-        std::string fname = fs_.root_path_ + "/" + TimeToString() + ".data";
+        std::string fname = fs_.root_path_ + "/" + TimeToString(&filetime) + ".data";
         WritableFile* file;
         fs_.env_->NewWritableFile(fname, &file);
         write_handle->writer_ = new DataWriter(fname, file);
+        write_handle->writer_->SetFileTime(filetime);
+	LOG(INFO) << "nowts " << timer::get_micros() << ", filetime " << write_handle->writer_->GetFileTime();
     }
     writer = write_handle->writer_;
     return writer;
@@ -1673,8 +2109,10 @@ TableImpl::WriteHandle* TableImpl::GetWriteHandle() {
     return write_handle;
 }
 
+// fail tolerant filesystem error, and small span write tera
 int DataWriter::AddRecord(const std::string& data, FileLocation* location) {
-    Status s = file_->Append(data);
+    Status s;
+    s = file_->Append(data);
     if (!s.ok()) {
         return -1;
     }
@@ -1691,6 +2129,21 @@ int DataWriter::AddRecord(const std::string& data, FileLocation* location) {
     LOG(INFO) << "add record, offset " << location->offset_
         << ", size " << location->size_;
     return 0;
+}
+
+// file > 1G or has been create 1 hour, create an new file
+bool DataWriter::SwitchDataFile() {
+    bool shouldswitch = offset_ > 1000000000;
+    if (!shouldswitch) {
+        int64_t nowts = timer::get_micros();
+        int64_t filets = filetime_.tv_sec * 1000000 + filetime_.tv_usec;
+        if (nowts > filets + 3600000000) {
+	    VLOG(30) << "time switch file, nowts " << nowts << ", filetime " << filets;
+            shouldswitch = true;
+        }
+    }
+
+    return shouldswitch;
 }
 
 // WriteBatch format

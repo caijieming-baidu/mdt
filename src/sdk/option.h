@@ -15,6 +15,7 @@ struct TeraOptions {
     std::string root_path_; // path of tera dir
     std::string tera_flag_; // path of tera.flag
     tera::Client* client_;
+    std::vector<tera::Client*> extra_client_; // N - 1
 
     // schema table(kv), key = table_name, value = BigQueryTableSchema (define in kv.proto)
     std::string schema_table_name_;

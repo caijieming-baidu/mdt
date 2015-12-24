@@ -9,6 +9,7 @@
 #include "util/env.h"
 #include "sdk/db.h"
 #include "sdk/table_impl.h"
+#include "sdk/multi_table_impl.h"
 
 namespace mdt {
 
