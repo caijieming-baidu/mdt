@@ -5,17 +5,17 @@
 #       automatically config this for you.
 ################################################################
 
-BOOST_INCDIR=thirdparty/boost_1_57_0
-SOFA_PBRPC_PREFIX=thirdparty
-PROTOBUF_PREFIX=thirdparty
-SNAPPY_PREFIX=thirdparty
-ZOOKEEPER_PREFIX=thirdparty
-GFLAGS_PREFIX=thirdparty
-GLOG_PREFIX=thirdparty
-GTEST_PREFIX=thirdparty
-GPERFTOOLS_PREFIX=thirdparty
-INS_PREFIX=thirdparty
-TERA_PREFIX=thirdparty
+BOOST_INCDIR=../../thirdparty/boost_1_57_0
+SOFA_PBRPC_PREFIX=../../thirdparty
+PROTOBUF_PREFIX=../../thirdparty
+SNAPPY_PREFIX=../../thirdparty
+ZOOKEEPER_PREFIX=../../thirdparty
+GFLAGS_PREFIX=../../thirdparty
+GLOG_PREFIX=../../thirdparty
+GTEST_PREFIX=../../thirdparty
+GPERFTOOLS_PREFIX=../../thirdparty
+INS_PREFIX=../../thirdparty
+TERA_PREFIX=../../thirdparty
 
 SOFA_PBRPC_INCDIR = $(SOFA_PBRPC_PREFIX)/include
 PROTOBUF_INCDIR = $(PROTOBUF_PREFIX)/include
@@ -46,21 +46,18 @@ PROTOC = $(PROTOBUF_PREFIX)/bin/protoc
 ################################################################
 
 DEPS_INCPATH = -I$(SOFA_PBRPC_INCDIR) -I$(PROTOBUF_INCDIR) \
-               -I$(SNAPPY_INCDIR) -I$(ZOOKEEPER_INCDIR) \
+               -I$(SNAPPY_INCDIR)  \
                -I$(GFLAGS_INCDIR) -I$(GLOG_INCDIR) -I$(GTEST_INCDIR) \
-               -I$(GPERFTOOLS_INCDIR) -I$(BOOST_INCDIR) -I$(INS_INCDIR) \
-               -I$(TERA_INCDIR)
+                -I$(BOOST_INCDIR) 
 DEPS_LDPATH = -L$(TERA_LIBDIR) -L$(SOFA_PBRPC_LIBDIR) -L$(PROTOBUF_LIBDIR) \
               -L$(SNAPPY_LIBDIR) -L$(ZOOKEEPER_LIBDIR) \
               -L$(GFLAGS_LIBDIR) -L$(GLOG_LIBDIR) -L$(GTEST_LIBDIR) \
               -L$(GPERFTOOLS_LIBDIR) -L$(INS_LIBDIR) \
               -L$(TERA_LIBDIR)
-DEPS_LDFLAGS = -ltera -lins_sdk -lsofa-pbrpc -lprotobuf -lsnappy -lzookeeper_mt \
-               -lgtest_main -lgtest -lglog -lgflags -ltcmalloc_minimal
+DEPS_LDFLAGS = -lsofa-pbrpc -lprotobuf -lsnappy -lglog -lgflags
 DEPS_LIBRARIES = $(TERA_LIBDIR)/libtera.a $(INS_LIBDIR)/libins_sdk.a \
                  $(SOFA_PBRPC_LIBDIR)/libsofa-pbrpc.a $(PROTOBUF_LIBDIR)/libprotobuf.a \
                  $(SNAPPY_LIBDIR)/libsnappy.a $(ZOOKEEPER_LIBDIR)/libzookeeper_mt.a \
                  $(GTEST_LIBDIR)/libgtest_main.a $(GTEST_LIBDIR)/libgtest.a \
-                 $(GLOG_LIBDIR)/libglog.a $(GFLAGS_LIBDIR)/libgflags.a \
-                 $(GPERFTOOLS_LIBDIR)/libtcmalloc_minimal.a
+                 $(GLOG_LIBDIR)/libglog.a $(GFLAGS_LIBDIR)/libgflags.a 
 
