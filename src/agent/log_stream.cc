@@ -20,6 +20,8 @@ DECLARE_string(table_name);
 DECLARE_string(primary_key);
 DECLARE_string(user_time);
 DECLARE_int32(time_type);
+
+DECLARE_int32(parser_type);
 // split string by substring
 DECLARE_string(string_delims);
 // split string by char
@@ -58,6 +60,23 @@ LogStream::LogStream(std::string module_name, LogOptions log_options,
     db_name_ = FLAGS_db_name;
     table_name_ = FLAGS_table_name;
 
+    LineHandlerConfigure* kv_conf = new LineHandlerConfigure;
+    LineHandlerConfigure* fixed_conf = new LineHandlerConfigure;
+
+    kv_conf->configure_id = 0;
+    kv_conf->parser_type = 0;
+    kv_conf->line_delims = FLAGS_line_delims;
+    kv_conf->primary_key = FLAGS_primary_key;
+    kv_conf->user_time = FLAGS_user_time;
+    kv_conf->time_type = FLAGS_time_type;
+
+    fixed_conf->configure_id = 1;
+    fixed_conf->parser_type = 1;
+    fixed_conf->line_delims = FLAGS_line_delims;
+    fixed_conf->primary_key = FLAGS_primary_key;
+    fixed_conf->user_time = FLAGS_user_time;
+    fixed_conf->time_type = FLAGS_time_type;
+
     // split alias index
     //std::map<std::string, std::string> alias_index_map;
     if (FLAGS_alias_index_list.size() != 0) {
@@ -70,10 +89,10 @@ LogStream::LogStream(std::string module_name, LogOptions log_options,
             if ((alias_vec.size() >= 2) && alias_vec[1].size()) {
                 std::vector<std::string> alias;
                 boost::split(alias, alias_vec[1], boost::is_any_of(","));
-                alias_index_map_.insert(std::pair<std::string, std::string>(alias_vec[0], alias_vec[0]));
+                kv_conf->alias_index_map.insert(std::pair<std::string, std::string>(alias_vec[0], alias_vec[0]));
                 VLOG(30) << "=====> index: " << alias_vec[0] << std::endl;
                 for (int j = 0; j < (int)alias.size(); j++) {
-                    alias_index_map_.insert(std::pair<std::string, std::string>(alias[j], alias_vec[0]));
+                    kv_conf->alias_index_map.insert(std::pair<std::string, std::string>(alias[j], alias_vec[0]));
                     VLOG(30) << "parse alias list: " << alias[j] << std::endl;
                 }
             }
@@ -86,12 +105,13 @@ LogStream::LogStream(std::string module_name, LogOptions log_options,
         boost::split(string_delims, FLAGS_string_delims, boost::is_any_of(","));
         VLOG(30) << "DEBUG: get string delims";
         for (int i = 0; i < (int)string_delims.size(); i++) {
-            string_delims_.push_back(string_delims[i]);
+            kv_conf->string_delims.push_back(string_delims[i]);
+            fixed_conf->string_delims.push_back(string_delims[i]);
         }
     }
 
     // split fixed index list
-    use_fixed_index_list_ = FLAGS_use_fixed_index_list;
+    //use_fixed_index_list_ = FLAGS_use_fixed_index_list;
     std::vector<std::string> fixed_index_list;
     if (FLAGS_fixed_index_list.size() != 0) {
         // --fixed_index_list=url:5,time:2
@@ -104,28 +124,23 @@ LogStream::LogStream(std::string module_name, LogOptions log_options,
                 (idx_pair[0].size() > 0) &&
                 (idx_pair[1].size() > 0)) {
                 int idx_num = atoi(idx_pair[1].c_str());
-                fixed_index_list_.insert(std::pair<std::string, int>(idx_pair[0], idx_num));
+                fixed_conf->fixed_index_list.insert(std::pair<std::string, int>(idx_pair[0], idx_num));
             }
         }
     }
 
-    line_delims_ = FLAGS_line_delims;
-    kv_delims_ = FLAGS_kv_delims;
-    enable_index_filter_ = FLAGS_enable_index_filter;
+    kv_conf->kv_delims = FLAGS_kv_delims;
+    //enable_index_filter_ = FLAGS_enable_index_filter;
     // split index
     std::vector<std::string> log_columns;
     if (FLAGS_index_list.size() != 0) {
         boost::split(log_columns, FLAGS_index_list, boost::is_any_of(","));
         VLOG(30) << "DEBUG: split index table";
         for (int i = 0 ; i < (int)log_columns.size(); i++) {
-            alias_index_map_.insert(std::pair<std::string, std::string>(log_columns[i], log_columns[i]));
-            index_list_.insert(log_columns[i]);
+            kv_conf->alias_index_map.insert(std::pair<std::string, std::string>(log_columns[i], log_columns[i]));
+            kv_conf->index_list.insert(log_columns[i]);
         }
     }
-
-    primary_key_ = FLAGS_primary_key;
-    user_time_ = FLAGS_user_time;
-    time_type_ = FLAGS_time_type;
 
     pthread_create(&tid_, NULL, LogStreamWrapper, this);
 }
@@ -144,6 +159,7 @@ void LogStream::Run() {
         std::map<uint64_t, std::string> local_delete_event;
         std::queue<DBKey*> local_key_queue;
         std::queue<DBKey*> local_failed_key_queue;
+        std::vector<std::string, LineHandlerConfigure*> local_conf_event;
 
         pthread_spin_lock(&lock_);
         VLOG(30) << "event: write " << write_event_.size() << ", delete " << delete_event_.size()
@@ -164,6 +180,10 @@ void LogStream::Run() {
             swap(failed_key_queue_, local_failed_key_queue);
             has_event = true;
         }
+        if (conf_event_.size()) {
+            swap(conf_event_, local_conf_event);
+            has_event = true;
+        }
         pthread_spin_unlock(&lock_);
 
         if (!has_event) {
@@ -174,6 +194,18 @@ void LogStream::Run() {
         }
 
         int64_t start_ts = mdt::timer::get_micros();
+        // handle confiure configure add
+        if (local_conf_event.size()) {
+            std::map<uint64_t, FileStream*>::iterator file_it = file_streams_.begin();
+            for (; file_it != file_streams_.end(); ++file_it) {
+                for (int idx = 0; idx < local_conf_event.size(); idx++) {
+                    std::pair<std::string, LineHandlerConfigure*>& conf_pair = local_conf_event[idx];
+                    FileStream* file_stream = file_it->second;
+                    file_stream->MatchAndSetConfigure(conf_pair.first, conf_pair.second);
+                }
+            }
+        }
+
         // handle push callback event
         while (!local_key_queue.empty()) {
             DBKey* key = local_key_queue.front();
@@ -457,10 +489,13 @@ std::string LogStream::TimeToString(struct timeval* filetime) {
     return time_buf;
 }
 
-// type 1: sec + micro sec
-uint64_t LogStream::ParseTime(const std::string& time_str) {
-    if (time_type_ == 1) {
+uint64_t LogStream::ParseTime(int tyme_type, const std::string& time_str) {
+    if (time_type == 1) {
         return (uint64_t)atol(time_str.c_str());
+    } else if (0) {
+
+    } else {
+
     }
     return 0;
 }
@@ -514,7 +549,7 @@ int LogStream::ParseMdtRequest(std::vector<std::string>& line_vec,
             // user has time item in log
             it = kv.kv_annotation.find(user_time_);
             if (user_time_.size() && it != kv.kv_annotation.end()) {
-                uint64_t ts = ParseTime(it->second);
+                uint64_t ts = ParseTime(1, it->second);
                 if (ts > 0) {
                     req->set_timestamp(ts);
                 } else {
@@ -662,6 +697,15 @@ int LogStream::DeleteWatchEvent(std::string filename, bool need_wakeup) {
     return 0;
 }
 
+int LogStream::AddLineParser(const std::string& log_name, LineHandlerConfigure* line_parser) {
+    VLOG(30) << "file " << log_name << " add to conf event queue, conf id " << line_parser->configure_id;
+    pthread_spin_lock(&lock_);
+    conf_event_.push_back(std::pair<std::string, LineHandlerConfigure*>(log_name, line_parser));
+    pthread_spin_unlock(&lock_);
+    thread_event_.Set();
+    return 0;
+}
+
 //////////////////////////////////////////
 //      FileStream implementation       //
 //////////////////////////////////////////
@@ -680,6 +724,7 @@ FileStream::FileStream(std::string module_name, LogOptions log_options,
     }
     current_offset_ = 0;
     pthread_spin_init(&lock_, PTHREAD_PROCESS_PRIVATE);
+    pthread_spin_init(&conf_lock_, PTHREAD_PROCESS_PRIVATE);
 
     // recovery restart point
     *success = RecoveryCheckPoint();
@@ -1029,6 +1074,16 @@ int FileStream::MarkDelete() {
         return 1;
     }
     return -1;
+}
+
+int FileStream::MatchAndSetConfigure(const std::string& log_name, LineHandlerConfigure* conf) {
+    if (filename_.find(log_name) == std::string::npos) {
+        return -1;
+    }
+    pthread_spin_lock(&conf_lock_);
+    line_parser_conf_.insert(std::pair<int64_t, std::string>(conf->configure_id, conf));
+    pthread_spin_unlock(&conf_lock_);
+    return 0;
 }
 
 }

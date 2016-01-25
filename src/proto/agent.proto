@@ -30,11 +30,57 @@ message RpcAddWatchModuleStreamResponse {
     optional RpcResponseStatus status = 1; 
 }
 
+///////////////////////////////////////////
+// parser configure
+///////////////////////////////////////////
+message AliasIndexPair {
+    optional string alias_name = 1;
+    optional string index_name = 2;
+}
+
+message FixedIndexPair {
+    optional string index_name = 1;
+    optional int32 idx = 2;
+}
+
+// parser_type: 
+//      0 = kv self parser
+//      1 = fixed parser
+
+message RpcLineParserConfigure {
+    optional int64 configure_id = 1;
+    repeated string string_delims =3;
+    optional string line_delims = 4;
+   
+    optional string primary_key = 5;
+    optional string user_time = 6;
+    optional int32 time_type = 7;
+
+    optional int32 parser_type = 8;
+    // parser type 1
+    optional string kv_delims = 9;
+    repeated string index_list = 10;
+    repeated AliasIndexPair alias_index_list = 10;
+    // parser type 2
+    repeated FixedIndexPair fixed_index_list = 11; 
+}
+
+message RpcAddLineParserRequest {
+    optional string production_name = 1;
+    optional string log_name = 2;
+    repeated RpcLineParserConfigure configure = 3;
+}
+
+message RpcAddLineParserResponse {
+    optional RpcResponseStatus status = 1; 
+}
+
 // rpc service
 service LogAgentService {
     rpc Echo(EchoRequest) returns(EchoResponse);
     rpc RpcAddWatchPath(RpcAddWatchPathRequest) returns(RpcAddWatchPathResponse);
     rpc RpcAddWatchModuleStream(RpcAddWatchModuleStreamRequest) returns(RpcAddWatchModuleStreamResponse);
+    rpc RpcAddLineParser(RpcAddLineParserRequest) returns(RpcAddLineParserResponse);
 }
 option py_generic_services = true;
 option cc_generic_services = true;

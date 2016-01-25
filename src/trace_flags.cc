@@ -42,6 +42,7 @@ DEFINE_string(primary_key, "", "primary key name");
 DEFINE_string(user_time, "", "user point out which field use as timestamp");
 DEFINE_int32(time_type, 1, "use for parse user time from log");
 
+DEFINE_int32(parser_type, 0, "parser type: 0 = kv self; 1 = fixed index");
 // split string by substring
 //DEFINE_string(string_delims, "||", "split string by substring");
 DEFINE_string(string_delims, "", "split string by substring");

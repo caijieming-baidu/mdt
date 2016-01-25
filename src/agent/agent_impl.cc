@@ -400,7 +400,7 @@ int AgentImpl::AddWatchPath(const std::string& dir) {
     return 0;
 }
 
-int AgentImpl::AddWatchModuleStream(const std::string& module_name, const std::string& log_name) {
+LogStream* AgentImpl::AddWatchModuleStream(const std::string& module_name, const std::string& log_name) {
     VLOG(30) << "add module stream, module name " << module_name << ", file name " << log_name;
     LogStream* stream = NULL;
     pthread_spin_lock(&lock_);
@@ -417,6 +417,59 @@ int AgentImpl::AddWatchModuleStream(const std::string& module_name, const std::s
         module_file_set_[log_name] = module_name;
     }
     pthread_spin_unlock(&lock_);
+    return stream;
+}
+
+int AgentImpl::TranslateLineParser(const mdt::LogAgentService::RpcLineParserConfigure& conf,
+                        LineHandlerConfigure* line_parser) {
+    line_parser->configure_id = conf.configure_id();
+    for (uint32_t i = 0; i < conf.string_delims_size(); i++) {
+        line_parser->string_delims.push_back(conf.string_delims(i));
+    }
+    line_parser->line_delims = conf.line_delims();
+    line_parser->primary_key = conf.primary_key();
+    line_parser->user_time = conf.user_time();
+    line_parser->time_type = conf.time_type();
+    line_parser->parser_type = conf.parser_type();
+    line_parser->kv_delims = conf.kv_delims();
+    for (int i = 0; i < conf.index_list_size(); i++) {
+        line_parser->index_list.insert(conf.index_list(i));
+    }
+    for (int i = 0; i < conf.alias_index_list_size(); i++) {
+        const AliasIndexPair& alias_pair = conf.alias_index_list(i);
+        line_parser->alias_index_map.insert(std::pair<std::string, std::string>(alias_pair.alias_name(),
+                                                                                alias_pair.index_name()));
+    }
+    for (int i = 0; i < conf.fixed_index_list_size(); i++) {
+        const FixedIndexPair& fixed_index = conf.fixed_index_list(i);
+        line_parser->fixed_index_map.insert(std::pair<std::string, int>(fixed_index.index_name(),
+                                                                        fixed_index.idx()));
+    }
+    return 0;
+}
+
+int AgentImpl::AddLineParser(const mdt::LogAgentService::RpcAddLineParserRequest* request) {
+    const std::string& module_name = request->production_name();
+    const std::string& log_name = request->log_name();
+
+    // use default line parser
+    LogStream* stream = NULL;
+    stream = AddWatchModuleStream(module_name, log_name);
+    if (stream == NULL) {
+        return -1;
+    }
+
+    // set user specify line parser
+    for (int i = 0; i < request->configure_size(); i++) {
+        const mdt::LogAgentService::RpcLineParserConfigure& conf = request->configure(i);
+        LineHandlerConfigure* line_parser = new LineHandlerConfigure;
+        if (TranslateLineParser(conf, line_parser) >= 0) {
+            stream->AddLineParser(log_name, line_parser);
+        } else {
+            LOG(WARNING) << "line parser translate error";
+            delete line_parser;
+        }
+    }
     return 0;
 }
 
@@ -451,9 +504,22 @@ void AgentImpl::RpcAddWatchModuleStream(::google::protobuf::RpcController* contr
     const std::string& module_name = request->production_name();
     const std::string& log_name = request->log_name(); // use for match log file name, if not match, discard such log file
 
-    if (AddWatchModuleStream(module_name, log_name) < 0) {
+    if (AddWatchModuleStream(module_name, log_name) == NULL) {
         response->set_status(mdt::LogAgentService::kRpcError);
         VLOG(35) << "add watch module " << module_name << " failed";
+    } else {
+        response->set_status(mdt::LogAgentService::kRpcOk);
+    }
+    done->Run();
+}
+
+void AgentImpl::RpcAddLineParser(::google::protobuf::RpcController* controller,
+                                 const mdt::LogAgentService::RpcAddLineParserRequest* request,
+                                 mdt::LogAgentService::RpcAddLineParserResponse* response,
+                                 ::google::protobuf::Closure* done) {
+    if (AddLineParser(request) < 0) {
+        response->set_status(mdt::LogAgentService::kRpcError);
+        VLOG(35) << "add line configure " << request->log_name() << " failed";
     } else {
         response->set_status(mdt::LogAgentService::kRpcOk);
     }

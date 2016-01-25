@@ -52,6 +52,8 @@ public:
     int HanleFailKey(DBKey* key);
     int MarkDelete();
 
+    int MatchAndSetConfigure(const std::string& log_name, LineHandlerConfigure* conf);
+
 private:
     void EncodeUint64BigEndian(uint64_t value, std::string* str);
     void MakeKeyValue(const std::string& module_name,
@@ -68,6 +70,10 @@ private:
     std::string module_name_;
     std::string filename_; // abs path
     uint64_t ino_;
+
+    pthread_spinlock_t conf_lock_;
+    std::map<int64_t, LineHandlerConfigure*> line_parser_conf_; // each line has many parser rules
+
     LogOptions log_options_;
     int fd_;
     // current send point
@@ -91,7 +97,7 @@ public:
     void Run();
 
 private:
-    uint64_t ParseTime(const std::string& time_str);
+    uint64_t ParseTime(int time_type, const std::string& time_str);
     std::string TimeToString(struct timeval* filetime);
     int ParseMdtRequest(std::vector<std::string>& line_vec,
                         std::vector<mdt::SearchEngine::RpcStoreRequest* >* req_vec);
@@ -116,6 +122,7 @@ private:
 
     std::string db_name_;
     std::string table_name_;
+    /*
     // log line parse relatively
     std::vector<std::string> string_delims_; // special split line use string
     std::string line_delims_; // general split line into items list
@@ -133,6 +140,8 @@ private:
     std::string user_time_;
     // type = 1: for second+micro-second
     int time_type_;
+    */
+    std::map<int64_t, LineHandlerConfigure*> default_line_parser_;
 
     // use for thead wait
     pthread_t tid_;
@@ -150,6 +159,7 @@ private:
     std::queue<DBKey*> key_queue_;
     std::queue<DBKey*> failed_key_queue_;
     ThreadPool fail_delay_thread_;
+    std::vector<std::pair<std::string, LineHandlerConfigure*> > conf_event_;
 };
 
 }
