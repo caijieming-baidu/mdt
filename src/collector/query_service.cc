@@ -317,7 +317,11 @@ void SearchEngineImpl::Store(::google::protobuf::RpcController* ctrl,
     param->done = done;
     ::mdt::StoreCallback callback = StoreCallback_dump;
     RpcStoreRequestToMdtRequest(req, request);
+
+    int64_t cost_ts = timer::get_micros();
+    std::string pkey = req->primary_key();
     table->Put(request, response, callback, param);
+    VLOG(30) << "store, pkey " << pkey << ", cost time " << timer::get_micros() - cost_ts;
     return;
 }
 

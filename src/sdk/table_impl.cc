@@ -562,19 +562,24 @@ int TableImpl::InternalCompressBatchWrite(WriteContext* context, std::vector<Wri
     VLOG(20) << ">>>>> lock put, ctx " << (uint64_t)(context);
 
     // construct sorted block, and write into fs
+    int64_t cost_ts;
+    cost_ts = timer::get_micros();
     sort_block->Finish();
     FileLocation location;
     DataWriter* writer = GetDataWriter(write_handle);
     writer->AddCompressRecord(sort_block->GetCompressionBlock(), &location);
     delete sort_block;
+    VLOG(30) << "write fs cost time " << cost_ts - timer::get_micros();
 
     // batch write index table
+    cost_ts = timer::get_micros();
     std::map<std::string, std::vector<WriteContext*> >::iterator it = primary_key_map.begin();
     for (; it != primary_key_map.end(); ++it) {
         (index_block[it->first])->Finish();
         WriteBatchIndexTable(it->first, timestamp_map[it->first], it->second, index_block[it->first], location);
         delete (index_block[it->first]);
     }
+    VLOG(30) << "write tera cost time " << cost_ts - timer::get_micros();
 
     // lock, resched other WriteContext
     VLOG(30) << "<<<<< unlock put";
