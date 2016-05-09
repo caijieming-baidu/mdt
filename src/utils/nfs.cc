@@ -289,10 +289,10 @@ int32_t Nfs::Rename(const std::string& from, const std::string& to) {
   return retval;
 }
 
-DfsFile* Nfs::OpenFile(const std::string& filename, int32_t flags) {
+::leveldb::DfsFile* Nfs::OpenFile(const std::string& filename, int32_t flags) {
   //fprintf(stderr, "OpenFile %s %d\n", filename.c_str(), flags);
   nfs::NFSFILE* file = NULL;
-  if (flags == RDONLY) {
+  if (flags == ::leveldb::RDONLY) {
     file = (*nfsOpen)(filename.c_str(), "r");
   } else {
     file = (*nfsOpen)(filename.c_str(), "w");

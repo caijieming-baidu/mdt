@@ -92,6 +92,7 @@ static pthread_once_t once = PTHREAD_ONCE_INIT;
 static Env* default_env;
 
 Env* EnvNfs();
+Env* EnvBfs();
 Env* EnvPosix();
 
 static void InitDefaultEnv() {
@@ -99,6 +100,8 @@ static void InitDefaultEnv() {
         default_env = EnvPosix();
     } else if (FLAGS_env_fs_type == "dfs") {
         default_env = EnvNfs();
+    } else if (FLAGS_env_fs_type == "bfs") {
+        default_env = EnvBfs();
     }
 }
 

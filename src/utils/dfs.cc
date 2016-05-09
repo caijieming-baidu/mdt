@@ -7,7 +7,7 @@
 #include <string>
 #include "utils/dfs.h"
 
-namespace mdt {
+namespace leveldb {
 Dfs* Dfs::NewDfs(const std::string& so_path, const std::string& conf) {
     dlerror();
     fprintf(stderr, "Open %s\n", so_path.c_str());
