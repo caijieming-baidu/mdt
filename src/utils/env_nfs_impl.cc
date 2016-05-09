@@ -18,10 +18,10 @@ static Status IOError(const std::string& context, int err_number) {
 
 class DfsWritableFile : public WritableFile {
 public:
-    DfsWritableFile(Dfs* fs, const std::string& fname)
+    DfsWritableFile(::leveldb::Dfs* fs, const std::string& fname)
         :fs_(fs), filename_(fname), file_(NULL) {
         fs_->Delete(filename_);
-        file_ = fs_->OpenFile(filename_, WRONLY);
+        file_ = fs_->OpenFile(filename_, ::leveldb::WRONLY);
         //assert(file_);
     }
 
@@ -75,16 +75,16 @@ public:
     }
 
 private:
-    Dfs* fs_;
+    ::leveldb::Dfs* fs_;
     std::string filename_;
-    DfsFile* file_;
+    ::leveldb::DfsFile* file_;
 };
 
 class DfsReadableFile: virtual public SequentialFile, virtual public RandomAccessFile {
 public:
-    DfsReadableFile(Dfs* fs, const std::string& fname)
+    DfsReadableFile(::leveldb::Dfs* fs, const std::string& fname)
         : fs_(fs), filename_(fname), file_(NULL), now_pos_(-1) {
-        file_ = fs_->OpenFile(filename_, RDONLY);
+        file_ = fs_->OpenFile(filename_, ::leveldb::RDONLY);
         if (file_ == NULL) {
             fprintf(stderr, "[env_dfs]: open file fail: %s\n", filename_.c_str());
         }
@@ -174,15 +174,15 @@ private:
     }
 
 private:
-    Dfs* fs_;
+    ::leveldb::Dfs* fs_;
     std::string filename_;
-    DfsFile* file_;
+    ::leveldb::DfsFile* file_;
     mutable ssize_t now_pos_;
 };
 
 class EnvNfsImpl : public Env {
 public:
-    EnvNfsImpl(Dfs* dfs) {
+    EnvNfsImpl(::leveldb::Dfs* dfs) {
         env_name_ = "NfsImpl";
         dfs_ = dfs;
     }
@@ -331,24 +331,41 @@ private:
 
 private:
     std::string env_name_;
-    Dfs* dfs_;
+    ::leveldb::Dfs* dfs_;
 };
 
 static pthread_once_t once = PTHREAD_ONCE_INIT;
 static Env* nfs_env;
 
 static void InitNfsEnv() {
-    fprintf(stderr, "fs mountpoint %s, conf path %s, so path %s\n",
+    fprintf(stderr, "nfs mountpoint %s, conf path %s, so path %s\n",
             FLAGS_env_nfs_mountpoint.c_str(),
             FLAGS_env_nfs_conf_path.c_str(),
             FLAGS_env_nfs_so_path.c_str());
     Nfs::Init(FLAGS_env_nfs_mountpoint, FLAGS_env_nfs_conf_path, FLAGS_env_nfs_so_path);
-    Dfs* dfs = Nfs::GetInstance();
+    ::leveldb::Dfs* dfs = Nfs::GetInstance();
+    nfs_env = new EnvNfsImpl(dfs);
+}
+
+static void InitBfsEnv() {
+    fprintf(stderr, "bfs mountpoint %s, conf path %s, so path %s\n",
+            FLAGS_env_nfs_mountpoint.c_str(),
+            FLAGS_env_nfs_conf_path.c_str(),
+            FLAGS_env_nfs_so_path.c_str());
+    ::leveldb::Dfs* dfs = ::leveldb::Dfs::NewDfs(FLAGS_env_nfs_so_path, FLAGS_env_nfs_conf_path);
+    if (dfs == NULL) {
+        abort();
+    }
     nfs_env = new EnvNfsImpl(dfs);
 }
 
 Env* EnvNfs() {
   pthread_once(&once, InitNfsEnv);
+  return nfs_env;
+}
+
+Env* EnvBfs() {
+  pthread_once(&once, InitBfsEnv);
   return nfs_env;
 }
 

@@ -18,7 +18,7 @@ namespace nfs {
 
 namespace mdt {
 
-class NFile : public DfsFile {
+class NFile : public ::leveldb::DfsFile {
 public:
   NFile(nfs::NFSFILE* file, const std::string& name);
   ~NFile();
@@ -35,7 +35,7 @@ private:
   std::string name_;
 };
 
-class Nfs : public Dfs {
+class Nfs : public ::leveldb::Dfs {
 public:
   static void Init(const std::string& mountpoint,
                    const std::string& conf_path,
@@ -51,7 +51,7 @@ public:
   int32_t Rename(const std::string& from, const std::string& to);
   int32_t Copy(const std::string& from, const std::string& to);
   int32_t ListDirectory(const std::string& path, std::vector<std::string>* result, std::vector<int64_t>* ctime);
-  DfsFile* OpenFile(const std::string& filename, int32_t flags);
+  ::leveldb::DfsFile* OpenFile(const std::string& filename, int32_t flags);
 private:
   Nfs();
   static Mutex mu_;
