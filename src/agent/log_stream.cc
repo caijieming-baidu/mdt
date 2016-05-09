@@ -46,6 +46,8 @@ DECLARE_string(fixed_index_list);
 DECLARE_int64(delay_retry_time);
 DECLARE_int64(agent_max_fd_num);
 
+DECLARE_bool(use_regex_index_pattern);
+
 namespace mdt {
 namespace agent {
 
@@ -578,7 +580,18 @@ int LogStream::ParseMdtRequest(const std::string table_name,
             monitor_vec->push_back(line);
         }
 
-        // support index
+        // support regex index
+        mdt::SearchEngine::RpcStoreRequest* regex_req = new mdt::SearchEngine::RpcStoreRequest();
+        if (SearchIndex(line, table_name, regex_req) >= 0) {
+            req_vec->push_back(regex_req);
+        } else {
+            delete regex_req;
+        }
+
+        // old index parser
+        if (FLAGS_use_regex_index_pattern) {
+            continue;
+        }
         mdt::SearchEngine::RpcStoreRequest* req = NULL;
         LogRecord log;
         if (log.SplitLogItem(line, string_delims_) < 0) {
@@ -855,6 +868,113 @@ int LogStream::AddTableName(const std::string& log_name) {
     return 0;
 }
 
+/////////////////////////////////////////
+//  support index
+/////////////////////////////////////////
+int LogStream::UpdateIndex(const mdt::LogAgentService::RpcUpdateIndexRequest* request) {
+    pthread_spin_lock(&monitor_lock_);
+    mdt::LogAgentService::RpcUpdateIndexRequest& index = index_set_[request->table_name()];
+    index.CopyFrom(*request);
+    pthread_spin_unlock(&monitor_lock_);
+    VLOG(10) << "Add index: " << request->DebugString();
+    return 0;
+}
+
+int LogStream::InternalSearchIndex(const std::string& line,
+                                   const mdt::LogAgentService::Rule& rule,
+                                   std::map<std::string, std::string>* kv) {
+    const mdt::LogAgentService::Expression& expr = rule.expr();
+
+    // only support regex
+    if (expr.type() == "regex") {
+        try {
+            std::string::const_iterator start, end;
+            start = line.begin();
+            end = line.end();
+
+            boost::regex expression(expr.expr());
+            boost::match_results<std::string::const_iterator> watch;
+            while (boost::regex_search(start, end, watch, expression)) {
+                if (watch.size() >= (rule.record_vec_size() + 1)) {
+                    VLOG(50) << line << ", watch " << watch[0];
+                    for (uint32_t result_idx = 1; result_idx < watch.size(); result_idx++) {
+                        kv->insert(std::pair<std::string, std::string>(rule.record_vec(result_idx - 1).key_name(), watch[result_idx]));
+                        VLOG(50) << "key " << rule.record_vec(result_idx - 1).key_name() << ", value " << watch[result_idx];
+                    }
+                }
+                start = watch[0].second;
+                break;
+            }
+        } catch (const boost::bad_expression& e) {}
+    } else if (expr.type() == "fixed") {
+        std::vector<std::string> kvpairs;
+        boost::split(kvpairs, line, boost::is_any_of(expr.column_delim()));
+        if ((kvpairs.size() > expr.column_idx()) && (rule.record_vec_size() > 0)) {
+            kv->insert(std::pair<std::string, std::string>(rule.record_vec(0).key_name(), kvpairs[expr.column_idx()]));
+            VLOG(50) << "fixed key " << rule.record_vec(0).key_name() << ", value " << kvpairs[expr.column_idx()];
+        }
+    }
+    return 0;
+}
+
+bool LogStream::CheckTimeStampValid(const std::string& time_str) {
+    int64_t ts = timer::get_micros();
+    int64_t log_ts = (int64_t)(atol(time_str.c_str()));
+    if (((ts - 3600 * 24 * 30) < log_ts) && (log_ts < (ts + 3600 * 24 * 30))) {
+        return true;
+    }
+    return false;
+}
+
+
+int LogStream::SearchIndex(const std::string& line, const std::string& table_name,
+                           mdt::SearchEngine::RpcStoreRequest* req) {
+    int res = -1;
+    pthread_spin_lock(&monitor_lock_);
+    if (index_set_.find(table_name) != index_set_.end()) {
+        const mdt::LogAgentService::RpcUpdateIndexRequest& index = index_set_[table_name];
+
+        req->set_db_name(index.db_name());
+        req->set_table_name(index.table_name());
+        req->set_timestamp(0);
+
+        // parse index from line
+        std::map<std::string, std::string> kv;
+        for (uint32_t idx = 0; idx < index.rule_list_size(); idx++) {
+            const mdt::LogAgentService::Rule& rule = index.rule_list(idx);
+            InternalSearchIndex(line, rule, &kv);
+        }
+
+        std::map<std::string, std::string>::iterator it = kv.begin();
+        for (; it != kv.end(); ++it) {
+            if (it->first == index.primary_key()) {
+                req->set_primary_key(it->second);
+            } else if ((it->first == index.timestamp()) && (CheckTimeStampValid(it->second))) {
+                req->set_timestamp((uint64_t)atol((it->second).c_str()));
+            } else {
+                mdt::SearchEngine::RpcStoreIndex* idx = req->add_index_list();
+                idx->set_index_table(it->first);
+                idx->set_key(it->second);
+            }
+        }
+        if (req->primary_key() == "") {
+            struct timeval dummy_time;
+            req->set_primary_key(TimeToString(&dummy_time));
+        }
+        if (req->timestamp() == 0) {
+            req->set_timestamp(mdt::timer::get_micros());
+        }
+        req->set_data(line);
+        res = 0;
+    }
+    pthread_spin_unlock(&monitor_lock_);
+
+    return res;
+}
+
+/////////////////////////////////////////
+//  support monitor
+/////////////////////////////////////////
 int LogStream::AddMonitor(const mdt::LogAgentService::RpcMonitorRequest* request) {
     pthread_spin_lock(&monitor_lock_);
     mdt::LogAgentService::RpcMonitorRequest& monitor = monitor_handler_set_[request->table_name()];
@@ -918,14 +1038,14 @@ bool LogStream::CheckRegex(const std::string& line, const mdt::LogAgentService::
             while (boost::regex_search(start, end, watch, expression)) {
                 // check log.y1, log.y2 {==, >=, >, <=, <} rule.x1, rule.x2
                 if (watch.size() >= (rule.record_vec_size() + 1)) {
-                    LOG(INFO) << line << ", watch " << watch[0];
+                    VLOG(50) << line << ", watch " << watch[0];
                     for (uint32_t result_idx = 1; result_idx < watch.size(); result_idx++) {
                         if (!CheckRecord(watch[result_idx], rule.record_vec(result_idx - 1))) {
                             is_match = false;
                             break;
                         }
                         is_match = true;
-                        LOG(INFO) << "log.key " << watch[result_idx] << ", expect.key " << rule.record_vec(result_idx - 1).key();
+                        VLOG(50) << "log.key " << watch[result_idx] << ", expect.key " << rule.record_vec(result_idx - 1).key();
                     }
                 }
                 start = watch[0].second;
@@ -943,13 +1063,13 @@ bool LogStream::CheckJson(const std::string& line, const mdt::LogAgentService::R
     bool is_match = false;
     const mdt::LogAgentService::Expression& expr = rule.expr();
 
-    LOG(INFO) << line << ", rule " << rule.DebugString();
+    VLOG(50) << line << ", rule " << rule.DebugString();
     if (expr.type() == "json") {
         LogRecord log;
         std::vector<std::string> str_delim_vec;
         str_delim_vec.push_back(expr.column_delim());
         if (log.SplitLogItem(line, str_delim_vec) >= 0 && log.columns.size() > expr.column_idx()) {
-            LOG(INFO) << line << ", json " << log.columns[expr.column_idx()];
+            VLOG(50) << line << ", json " << log.columns[expr.column_idx()];
             std::stringstream ss(log.columns[expr.column_idx()]);
             try {
                 boost::property_tree::ptree ptree;
@@ -961,7 +1081,7 @@ bool LogStream::CheckJson(const std::string& line, const mdt::LogAgentService::R
                         break;
                     }
                     is_match = true;
-                    LOG(INFO) << "json.key " << item << ", expect.key " << rule.record_vec(idx).key();
+                    VLOG(50) << "json.key " << item << ", expect.key " << rule.record_vec(idx).key();
                 }
             } catch (boost::property_tree::ptree_error& e) {}
         }
@@ -989,7 +1109,7 @@ bool LogStream::MonitorHasEvent(const std::string& table_name, const std::string
 
             // 2. parse and check result
             const mdt::LogAgentService::Rule& result = rule_info.result();
-            LOG(INFO) << "is_match " << is_match;
+            VLOG(50) << "is_match " << is_match;
             is_match = is_match && !CheckJson(line, result);
         }
     }
@@ -1159,7 +1279,7 @@ int FileStream::RecoveryCheckPoint() {
     }
 
     end_ts = timer::get_micros();
-    LOG(INFO) << "recovery " << filename_ << ", cost time " << end_ts - begin_ts;
+    VLOG(50) << "recovery " << filename_ << ", cost time " << end_ts - begin_ts;
     return 0;
 }
 
@@ -1221,7 +1341,7 @@ ssize_t FileStream::ParseLine(char* buf, ssize_t size, std::vector<std::string>*
     }
     for (uint32_t i = 0; i < line_vec->size(); i++) {
         res += (*line_vec)[i].size() + 1;
-        VLOG(40) << "line: " << (*line_vec)[i] << ", res " << res << ", size " << size;
+        VLOG(70) << "line: " << (*line_vec)[i] << ", res " << res << ", size " << size;
     }
     return res;
 }

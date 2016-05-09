@@ -9,6 +9,9 @@
 
 #include "mail/mail.h"
 #include "leveldb/db.h"
+#include "leveldb/slice.h"
+#include "leveldb/cache.h"
+#include "leveldb/status.h"
 #include <boost/shared_ptr.hpp>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/classification.hpp>
@@ -35,6 +38,10 @@ DECLARE_int64(scheduler_galaxy_app_trace_period);
 DECLARE_int64(scheduler_mail_max_queue_size);
 DECLARE_int64(scheduler_mail_delay);
 
+// leveldb
+DECLARE_int64(cache_size);
+DECLARE_string(db_dir);
+
 namespace mdt {
 namespace scheduler {
 
@@ -56,6 +63,16 @@ SchedulerImpl::SchedulerImpl()
     ctrl_thread_(10),
     galaxy_trace_pool_(30),
     monitor_thread_(3) {
+
+    db_dir_ = FLAGS_db_dir;
+    leveldb::Options options;
+    options.create_if_missing = true;
+    options.block_cache = leveldb::NewLRUCache(FLAGS_cache_size);
+    leveldb::Status status = leveldb::DB::Open(options, db_dir_, &disk_db_);
+    if (!status.ok()) {
+        LOG(WARNING) << "leveldb open fail, error " << status.ToString();
+        return;
+    }
 
     rpc_client_ = new RpcClient();
 
@@ -792,7 +809,7 @@ void SchedulerImpl::RpcMonitor(::google::protobuf::RpcController* controller,
 }
 
 void SchedulerImpl::GetMonitorName(const std::string& db_name, const std::string& table_name, std::string* monitor_name) {
-    *monitor_name = db_name + "#" + table_name;
+    *monitor_name = "Monitor#" + db_name + "#" + table_name;
     return;
 }
 
@@ -885,6 +902,92 @@ void SchedulerImpl::RpcMonitorStream(::google::protobuf::RpcController* controll
     ThreadPool::Task task = boost::bind(&SchedulerImpl::DoRpcMonitorStream, this, controller, request, response, done);
     monitor_thread_.AddTask(task);
     return;
+}
+
+// push down index configure
+void SchedulerImpl::AsyncUpdateIndexCallback(const mdt::LogAgentService::RpcUpdateIndexRequest* req,
+                                             mdt::LogAgentService::RpcUpdateIndexResponse* resp,
+                                             bool failed, int error,
+                                             mdt::LogAgentService::LogAgentService_Stub* service) {
+    delete resp;
+    delete req;
+    delete service;
+}
+
+void SchedulerImpl::GetIndexConfigureName(const std::string& db_name, const std::string& table_name, std::string* dest_name) {
+    *dest_name = "Index#" + db_name + "#" + table_name;
+    return;
+}
+
+void SchedulerImpl::TranslateUpdateIndexRequest(const mdt::LogSchedulerService::RpcUpdateIndexRequest* request,
+                                            mdt::LogAgentService::RpcUpdateIndexRequest* req) {
+    req->set_db_name(request->db_name());
+    req->set_table_name(request->table_name());
+    req->set_primary_key(request->primary_key());
+    req->set_timestamp(request->timestamp());
+
+    for (uint32_t j = 0; j < request->rule_list_size(); j++) {
+        mdt::LogAgentService::Rule* r = req->add_rule_list();
+        const mdt::LogSchedulerService::Rule& r2 = request->rule_list(j);
+        CopyRule(r2, r);
+    }
+    return;
+}
+
+void SchedulerImpl::DoRpcUpdateIndex(::google::protobuf::RpcController* controller,
+                       const mdt::LogSchedulerService::RpcUpdateIndexRequest* request,
+                       mdt::LogSchedulerService::RpcUpdateIndexResponse* response,
+                       ::google::protobuf::Closure* done) {
+    // add monitor info
+    std::string mname;
+    GetIndexConfigureName(request->db_name(), request->table_name(), &mname);
+    pthread_spin_lock(&monitor_lock_);
+    mdt::LogSchedulerService::RpcUpdateIndexRequest& index = index_set_[mname];
+    index.CopyFrom(*request);
+    pthread_spin_unlock(&monitor_lock_);
+
+    // send index info to all agent
+    // TODO: support label
+    std::vector<std::string> addr_vec;
+    pthread_spin_lock(&agent_lock_);
+    std::map<std::string, AgentInfo>::iterator it = agent_map_.begin();
+    for (; it != agent_map_.end(); ++it) {
+        const std::string& addr = it->first;
+        addr_vec.push_back(addr);
+    }
+    pthread_spin_unlock(&agent_lock_);
+
+    mdt::LogAgentService::RpcUpdateIndexRequest temp_req;
+    TranslateUpdateIndexRequest(request, &temp_req);
+    LOG(INFO) << mname << ", " << temp_req.DebugString() << std::endl;
+
+    for (uint32_t i = 0; i < addr_vec.size(); i++) {
+        mdt::LogAgentService::LogAgentService_Stub* service;
+        rpc_client_->GetMethodList(addr_vec[i], &service);
+        mdt::LogAgentService::RpcUpdateIndexRequest* req = new mdt::LogAgentService::RpcUpdateIndexRequest();
+        mdt::LogAgentService::RpcUpdateIndexResponse* resp = new mdt::LogAgentService::RpcUpdateIndexResponse();
+
+        req->CopyFrom(temp_req);
+        boost::function<void (const mdt::LogAgentService::RpcUpdateIndexRequest*,
+                mdt::LogAgentService::RpcUpdateIndexResponse*,
+                bool, int)> callback =
+            boost::bind(&SchedulerImpl::AsyncUpdateIndexCallback,
+                    this, _1, _2, _3, _4, service);
+        rpc_client_->AsyncCall(service,
+                &mdt::LogAgentService::LogAgentService_Stub::RpcUpdateIndex,
+                req, resp, callback);
+    }
+
+    done->Run();
+}
+
+void SchedulerImpl::RpcUpdateIndex(::google::protobuf::RpcController* controller,
+                                  const mdt::LogSchedulerService::RpcUpdateIndexRequest* request,
+                                  mdt::LogSchedulerService::RpcUpdateIndexResponse* response,
+                                  ::google::protobuf::Closure* done) {
+    response->set_status(::mdt::LogSchedulerService::kRpcOk);
+    ThreadPool::Task task = boost::bind(&SchedulerImpl::DoRpcUpdateIndex, this, controller, request, response, done);
+    monitor_thread_.AddTask(task);
 }
 
 }

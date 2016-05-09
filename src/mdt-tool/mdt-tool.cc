@@ -59,6 +59,7 @@ DEFINE_string(cmd_limit, "0", "number of result");
 DEFINE_string(cmd_index_list, "", "key1,==,val1,key2,>=,val2");
 
 DEFINE_string(cmd_monitor_flagfile, "../conf/monitor.conf", "json configure file");
+DEFINE_string(cmd_index_flagfile, "../conf/index.conf", "json configure file");
 
 char* StripWhite(char* line) {
     char *s, *t;
@@ -626,7 +627,7 @@ int GetOp(std::vector<std::string>& cmd_vec) {
     }
     int num_index = cmd_vec.size() - 6;
     if (num_index % 3 != 0) {
-        std::cout << "num of condition index not match\n";
+        std::cout << ">>> command format error:\n\texample: Get ktrace trace 0 0 1 [ac.tm > 0]\n";
         return 0;
     }
     for (int i = 0; i < num_index; i += 3) {
@@ -1489,6 +1490,50 @@ int SetMonitor(std::vector<std::string>& cmd_vec) {
     return 0;
 }
 
+void ParseJsonToUpdateIndexRequest(const std::string& flagfile, mdt::LogSchedulerService::RpcUpdateIndexRequest* req) {
+    try {
+        boost::property_tree::ptree ptree;
+        boost::property_tree::read_json(flagfile, ptree);
+        std::string db_name = ptree.get<std::string>("db_name");
+        std::string table_name = ptree.get<std::string>("table_name");
+        std::string primary_key = ptree.get<std::string>("primary_key");
+        std::string timestamp = ptree.get<std::string>("timestamp");
+
+        // set db and table
+        req->set_db_name(db_name);
+        req->set_table_name(table_name);
+        req->set_primary_key(primary_key);
+        req->set_timestamp(timestamp);
+
+        // parse rule list
+        BOOST_FOREACH(boost::property_tree::ptree::value_type &v1, ptree.get_child("rule_list")) {
+            mdt::LogSchedulerService::Rule* rule_v = req->add_rule_list();
+            ParseJsonRule(v1.second, rule_v);
+        }
+        std::cout << req->DebugString() << std::endl;
+    } catch (boost::property_tree::ptree_error& e) {}
+    return;
+}
+
+int UpdateIndex(std::vector<std::string>& cmd_vec) {
+    std::string jsonfile = cmd_vec[1];
+
+    std::string scheduler_addr = FLAGS_scheduler_addr;
+    mdt::RpcClient* rpc_client = new mdt::RpcClient;
+    mdt::LogSchedulerService::LogSchedulerService_Stub* service;
+    rpc_client->GetMethodList(scheduler_addr, &service);
+
+    mdt::LogSchedulerService::RpcUpdateIndexRequest* req = new mdt::LogSchedulerService::RpcUpdateIndexRequest();
+    mdt::LogSchedulerService::RpcUpdateIndexResponse* resp = new mdt::LogSchedulerService::RpcUpdateIndexResponse();
+    ParseJsonToUpdateIndexRequest(jsonfile, req);
+
+    rpc_client->SyncCall(service, &mdt::LogSchedulerService::LogSchedulerService_Stub::RpcUpdateIndex, req, resp);
+    delete req;
+    delete resp;
+    delete service;
+    return 0;
+}
+
 int main(int ac, char* av[]) {
     /*
     if (DupNfsSterr() < 0) {
@@ -1527,6 +1572,10 @@ int main(int ac, char* av[]) {
             non_interactive_cmd_vec.push_back(FLAGS_cmd);
             non_interactive_cmd_vec.push_back(FLAGS_cmd_monitor_flagfile);
             SetMonitor(non_interactive_cmd_vec);
+        } else if (FLAGS_cmd == "UpdateIndex") {
+            non_interactive_cmd_vec.push_back(FLAGS_cmd);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_index_flagfile);
+            UpdateIndex(non_interactive_cmd_vec);
         } else if (FLAGS_cmd == "GetByTime") {
             // cmd: GetByTime <dbname> <tablename> start(year-month-day-hour:min:sec) end(year-month-day-hour:min:sec) <limit>
             // key1,>=,value1,key2,==,value2

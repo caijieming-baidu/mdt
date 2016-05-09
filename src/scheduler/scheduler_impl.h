@@ -146,6 +146,11 @@ public:
                           mdt::LogSchedulerService::RpcMonitorStreamResponse* response,
                           ::google::protobuf::Closure* done);
 
+    void RpcUpdateIndex(::google::protobuf::RpcController* controller,
+                       const mdt::LogSchedulerService::RpcUpdateIndexRequest* request,
+                       mdt::LogSchedulerService::RpcUpdateIndexResponse* response,
+                       ::google::protobuf::Closure* done);
+
 private:
     void AsyncTraceGalaxyAppCallback(const mdt::LogAgentService::RpcTraceGalaxyAppRequest* req,
                 mdt::LogAgentService::RpcTraceGalaxyAppResponse* resp,
@@ -207,8 +212,23 @@ private:
                     mdt::LogSchedulerService::RpcMonitorResponse* response,
                     ::google::protobuf::Closure* done);
 
+    // support index push down
+    void TranslateUpdateIndexRequest(const mdt::LogSchedulerService::RpcUpdateIndexRequest* request,
+                                    mdt::LogAgentService::RpcUpdateIndexRequest* req);
+    void AsyncUpdateIndexCallback(const mdt::LogAgentService::RpcUpdateIndexRequest* req,
+                                  mdt::LogAgentService::RpcUpdateIndexResponse* resp,
+                                  bool failed, int error,
+                                  mdt::LogAgentService::LogAgentService_Stub* service);
+    void GetIndexConfigureName(const std::string& db_name, const std::string& table_name, std::string* dest_name);
+    void DoRpcUpdateIndex(::google::protobuf::RpcController* controller,
+                          const mdt::LogSchedulerService::RpcUpdateIndexRequest* request,
+                          mdt::LogSchedulerService::RpcUpdateIndexResponse* response,
+                          ::google::protobuf::Closure* done);
 
 private:
+    std::string db_dir_;
+    leveldb::DB* disk_db_;
+
     RpcClient* rpc_client_;
 
     ThreadPool agent_thread;
@@ -237,6 +257,7 @@ private:
     pthread_spinlock_t monitor_lock_;
     // <db_name.table_name, monitor>
     std::map<std::string, mdt::LogSchedulerService::RpcMonitorRequest> monitor_handler_set_;
+    std::map<std::string, mdt::LogSchedulerService::RpcUpdateIndexRequest> index_set_;
 
     ThreadPool monitor_thread_;
     Mail mail_;

@@ -459,6 +459,25 @@ int AgentImpl::AddMonitor(const mdt::LogAgentService::RpcMonitorRequest* request
         //stream = new LogStream(request->db_name(), log_options_, rpc_client_, &server_lock_, &info_);
         //log_streams_[request->db_name()] = stream;
     }
+    //res = stream->AddMonitor(request);
+
+    pthread_spin_unlock(&lock_);
+    return res;
+}
+
+int AgentImpl::UpdateIndex(const mdt::LogAgentService::RpcUpdateIndexRequest* request) {
+    int res = 0;
+    LogStream* stream = NULL;
+    pthread_spin_lock(&lock_);
+    std::map<std::string, LogStream*>::iterator it = log_streams_.find(request->db_name());
+    if (it != log_streams_.end()) {
+        stream = log_streams_[request->db_name()];
+        res = stream->UpdateIndex(request);
+    } else {
+        //stream = new LogStream(request->db_name(), log_options_, rpc_client_, &server_lock_, &info_);
+        //log_streams_[request->db_name()] = stream;
+    }
+    //res = stream->UpdateIndex(request);
 
     pthread_spin_unlock(&lock_);
     return res;
@@ -594,6 +613,18 @@ void AgentImpl::RpcMonitor(::google::protobuf::RpcController* controller,
                            mdt::LogAgentService::RpcMonitorResponse* response,
                            ::google::protobuf::Closure* done) {
     if (AddMonitor(request) == 0) {
+        response->set_status(mdt::LogAgentService::kRpcOk);
+    } else {
+        response->set_status(mdt::LogAgentService::kRpcError);
+    }
+    done->Run();
+}
+
+void AgentImpl::RpcUpdateIndex(::google::protobuf::RpcController* controller,
+                    const mdt::LogAgentService::RpcUpdateIndexRequest* request,
+                    mdt::LogAgentService::RpcUpdateIndexResponse* response,
+                    ::google::protobuf::Closure* done) {
+    if (UpdateIndex(request) == 0) {
         response->set_status(mdt::LogAgentService::kRpcOk);
     } else {
         response->set_status(mdt::LogAgentService::kRpcError);

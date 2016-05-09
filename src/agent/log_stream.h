@@ -106,8 +106,16 @@ public:
 
     // support monitor
     int AddMonitor(const mdt::LogAgentService::RpcMonitorRequest* request);
+    int UpdateIndex(const mdt::LogAgentService::RpcUpdateIndexRequest* request);
 
 private:
+    bool CheckTimeStampValid(const std::string& time_str);
+    int SearchIndex(const std::string& line, const std::string& table_name,
+                    mdt::SearchEngine::RpcStoreRequest* req);
+    int InternalSearchIndex(const std::string& line,
+                            const mdt::LogAgentService::Rule& rule,
+                            std::map<std::string, std::string>* kv);
+
     void GetTableName(std::string file_name, std::string* table_name);
     uint64_t ParseTime(const std::string& time_str);
     std::string TimeToString(struct timeval* filetime);
@@ -195,6 +203,7 @@ private:
     pthread_spinlock_t monitor_lock_;
     // <table name, monitor>
     std::map<std::string, mdt::LogAgentService::RpcMonitorRequest> monitor_handler_set_;
+    std::map<std::string, mdt::LogAgentService::RpcUpdateIndexRequest> index_set_;
 };
 
 }

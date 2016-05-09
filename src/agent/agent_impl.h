@@ -75,6 +75,11 @@ public:
                     mdt::LogAgentService::RpcMonitorResponse* response,
                     ::google::protobuf::Closure* done);
 
+    void RpcUpdateIndex(::google::protobuf::RpcController* controller,
+                    const mdt::LogAgentService::RpcUpdateIndexRequest* request,
+                    mdt::LogAgentService::RpcUpdateIndexResponse* response,
+                    ::google::protobuf::Closure* done);
+
 private:
     void ParseLogDir(std::vector<std::string>& log_vec);
     void ParseModuleName(const std::string& filename, std::string* module_name);
@@ -97,6 +102,8 @@ private:
 
     // add monitor
     int AddMonitor(const mdt::LogAgentService::RpcMonitorRequest* request);
+
+    int UpdateIndex(const mdt::LogAgentService::RpcUpdateIndexRequest* request);
 
 private:
     pthread_spinlock_t lock_;

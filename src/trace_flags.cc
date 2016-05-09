@@ -34,6 +34,8 @@ DEFINE_string(fixed_index_list, "url:5,time:2", "use for fix index list match");
 
 DEFINE_int64(delay_retry_time, 2000, "in ms, time period after async push fail to retry");
 
+DEFINE_bool(use_regex_index_pattern, true, "new regex index search");
+
 ///////////////////////////////////////////
 // scheduler flags
 ///////////////////////////////////////////
@@ -49,6 +51,8 @@ DEFINE_int32(collector_max_error, 1, "max error can occur in collector");
 DEFINE_int64(scheduler_galaxy_app_trace_period, 300000, "in (ms) update task trace path info");
 DEFINE_int64(scheduler_mail_max_queue_size, 30, "max mail queue size");
 DEFINE_int64(scheduler_mail_delay, 5000, "delay (ms) time in send mail");
+
+DEFINE_int64(cache_size, 104857600, "leveldb block cache size");
 
 ///////////////////////////////////////////
 // scheduler flags

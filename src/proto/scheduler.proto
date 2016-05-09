@@ -192,6 +192,18 @@ message RpcMonitorStreamResponse {
     optional RpcResponseStatus status = 1; 
 }
 
+// support index push down
+message RpcUpdateIndexRequest {
+    optional string db_name = 1;
+    optional string table_name = 3;
+    optional string primary_key = 4;
+    optional string timestamp = 5;
+    repeated Rule rule_list = 2;
+}
+message RpcUpdateIndexResponse {
+    optional RpcResponseStatus status = 1; 
+}
+
 // rpc service
 service LogSchedulerService {
     rpc Echo(EchoRequest) returns(EchoResponse);
@@ -204,6 +216,7 @@ service LogSchedulerService {
     rpc RpcTraceGalaxyApp(RpcTraceGalaxyAppRequest) returns(RpcTraceGalaxyAppResponse);
     rpc RpcMonitorStream(RpcMonitorStreamRequest) returns(RpcMonitorStreamResponse);
     rpc RpcMonitor(RpcMonitorRequest) returns(RpcMonitorResponse);
+    rpc RpcUpdateIndex(RpcUpdateIndexRequest) returns(RpcUpdateIndexResponse);
 }
 option py_generic_services = true;
 option cc_generic_services = true;
