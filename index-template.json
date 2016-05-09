@@ -1,0 +1,40 @@
+{
+    "db_name": "xxx",
+    "table_name": "xxx",
+    "primary_key": "",
+    "timestamp": "",
+    "rule_list": [
+	{
+            "expression": {
+                "type": "regex",
+                "expr": "passuid=([0-9]+)",
+                "col_delim": "",
+                "col_idx": -1 
+            },
+            "record": [
+                {
+                    "op": "",
+                    "key": "",
+                    "type": "string",
+                    "key_name": "passuid"
+                }
+            ]
+        },
+	{
+            "expression": {
+                "type": "fixed",
+                "expr": "",
+                "col_delim": " \t||",
+                "col_idx": 1 
+            },
+            "record": [
+                {
+                    "op": "",
+                    "key": "",
+                    "type": "string",
+                    "key_name": "time"
+                }
+            ]
+        }
+    ]
+}
