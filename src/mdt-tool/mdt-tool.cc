@@ -1490,6 +1490,15 @@ int SetMonitor(std::vector<std::string>& cmd_vec) {
     return 0;
 }
 
+void ParseJsonLogMeta(boost::property_tree::ptree& ptree, mdt::LogSchedulerService::LogMeta* meta) {
+    try {
+        // parse expression
+        std::string* meta_name = meta->mutable_meta_name();
+        *meta_name = ptree.get<std::string>("meta_name");
+    } catch (boost::property_tree::ptree_error& e) {}
+    return;
+}
+
 void ParseJsonToUpdateIndexRequest(const std::string& flagfile, mdt::LogSchedulerService::RpcUpdateIndexRequest* req) {
     try {
         boost::property_tree::ptree ptree;
@@ -1510,6 +1519,13 @@ void ParseJsonToUpdateIndexRequest(const std::string& flagfile, mdt::LogSchedule
             mdt::LogSchedulerService::Rule* rule_v = req->add_rule_list();
             ParseJsonRule(v1.second, rule_v);
         }
+
+        // parse meta
+        BOOST_FOREACH(boost::property_tree::ptree::value_type &v2, ptree.get_child("logmeta")) {
+            mdt::LogSchedulerService::LogMeta* meta = req->add_meta();
+            ParseJsonLogMeta(v2.second, meta);
+        }
+
         std::cout << req->DebugString() << std::endl;
     } catch (boost::property_tree::ptree_error& e) {}
     return;

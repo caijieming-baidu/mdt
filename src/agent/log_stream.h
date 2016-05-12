@@ -109,6 +109,8 @@ public:
     int UpdateIndex(const mdt::LogAgentService::RpcUpdateIndexRequest* request);
 
 private:
+    int CollectorMeta(const mdt::LogAgentService::LogMeta& meta,
+                     std::map<std::string, std::string>* kv);
     bool CheckTimeStampValid(const std::string& time_str);
     int SearchIndex(const std::string& line, const std::string& table_name,
                     mdt::SearchEngine::RpcStoreRequest* req);

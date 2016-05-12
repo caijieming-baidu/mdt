@@ -926,6 +926,19 @@ bool LogStream::CheckTimeStampValid(const std::string& time_str) {
     return false;
 }
 
+int LogStream::CollectorMeta(const mdt::LogAgentService::LogMeta& meta,
+                             std::map<std::string, std::string>* kv) {
+    int res = 0;
+
+    if (meta.meta_name() == "ip") {
+        char hostname[256];
+        gethostname(hostname, 256);
+        std::string hname = hostname;
+        kv->insert(std::pair<std::string, std::string>(meta.meta_name(), hname));
+    }
+
+    return res;
+}
 
 int LogStream::SearchIndex(const std::string& line, const std::string& table_name,
                            mdt::SearchEngine::RpcStoreRequest* req) {
@@ -945,6 +958,12 @@ int LogStream::SearchIndex(const std::string& line, const std::string& table_nam
             InternalSearchIndex(line, rule, &kv);
         }
 
+        // parse log meta
+        for (uint32_t idx = 0; idx < index.meta_size(); idx++) {
+            const mdt::LogAgentService::LogMeta& meta = index.meta(idx);
+            CollectorMeta(meta, &kv);
+        }
+
         std::map<std::string, std::string>::iterator it = kv.begin();
         for (; it != kv.end(); ++it) {
             if (it->first == index.primary_key()) {
@@ -952,9 +971,9 @@ int LogStream::SearchIndex(const std::string& line, const std::string& table_nam
             } else if ((it->first == index.timestamp()) && (CheckTimeStampValid(it->second))) {
                 req->set_timestamp((uint64_t)atol((it->second).c_str()));
             } else {
-                mdt::SearchEngine::RpcStoreIndex* idx = req->add_index_list();
-                idx->set_index_table(it->first);
-                idx->set_key(it->second);
+                mdt::SearchEngine::RpcStoreIndex* idx_tmp = req->add_index_list();
+                idx_tmp->set_index_table(it->first);
+                idx_tmp->set_key(it->second);
             }
         }
         if (req->primary_key() == "") {

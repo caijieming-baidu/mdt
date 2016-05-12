@@ -931,6 +931,12 @@ void SchedulerImpl::TranslateUpdateIndexRequest(const mdt::LogSchedulerService::
         const mdt::LogSchedulerService::Rule& r2 = request->rule_list(j);
         CopyRule(r2, r);
     }
+
+    for (uint32_t j = 0; j < request->meta_size(); j++) {
+        mdt::LogAgentService::LogMeta* meta = req->add_meta();
+        const mdt::LogSchedulerService::LogMeta& meta2 = request->meta(j);
+        meta->set_meta_name(meta2.meta_name());
+    }
     return;
 }
 
