@@ -53,6 +53,7 @@ DECLARE_string(agent_service_port);
 
 DEFINE_string(cmd_db_name, "", "db name");
 DEFINE_string(cmd_table_name, "", "table name");
+DEFINE_string(cmd_primary_key, "", "primary_key");
 DEFINE_string(cmd_start_ts, "2016-04-06-16:10:00", "start timestamp");
 DEFINE_string(cmd_end_ts, "2016-04-06-16:15:00", "end timestamp");
 DEFINE_string(cmd_limit, "0", "number of result");
@@ -300,7 +301,6 @@ int SearchPrimaryKey(std::vector<std::string>& cmd_vec) {
     const std::string& primary_key = cmd_vec[6];
 
     // create db
-    std::cout << "open db ..." << std::endl;
     mdt::Database* db;
     db = mdt::OpenDatabase(db_name);
     if (db == NULL) {
@@ -308,7 +308,6 @@ int SearchPrimaryKey(std::vector<std::string>& cmd_vec) {
         return -1;
     }
 
-    std::cout << "open table ..." << std::endl;
     mdt::Table* table;
     table = OpenTable(db, table_name);
     if (table == NULL) {
@@ -328,14 +327,11 @@ int SearchPrimaryKey(std::vector<std::string>& cmd_vec) {
     mdt::SearchResponse* search_resp = new mdt::SearchResponse;
 
     table->Get(search_req, search_resp);
-    std::cout << "=============================================\n";
-    std::cout << "              Get by Primary Key             \n";
-    std::cout << "=============================================\n";
     for (uint32_t i = 0; i < search_resp->result_stream.size(); i++) {
         const mdt::ResultStream& result = search_resp->result_stream[i];
         const std::string& pri_key = result.primary_key;
         for (uint32_t j = 0; j < result.result_data_list.size(); j++) {
-            std::cout << "###PrimaryKey :" << pri_key << ", ###Value :" << result.result_data_list[j] << std::endl;
+            std::cout << pri_key << " : " << result.result_data_list[j] << std::endl;
         }
     }
     return 0;
@@ -1612,6 +1608,15 @@ int main(int ac, char* av[]) {
                 }
             }
             GetByTimeOp(non_interactive_cmd_vec);
+        } else if (FLAGS_cmd == "GetPri") {
+            non_interactive_cmd_vec.push_back(FLAGS_cmd);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_db_name);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_table_name);
+            non_interactive_cmd_vec.push_back("0");
+            non_interactive_cmd_vec.push_back("0");
+            non_interactive_cmd_vec.push_back("1");
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_primary_key);
+            SearchPrimaryKey(non_interactive_cmd_vec);
         } else {
             std::cout << "interactive mode, cmd " << FLAGS_cmd << " not know\n";
             HelpManue();
