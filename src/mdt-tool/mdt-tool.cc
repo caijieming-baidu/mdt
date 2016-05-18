@@ -58,6 +58,8 @@ DEFINE_string(cmd_start_ts, "2016-04-06-16:10:00", "start timestamp");
 DEFINE_string(cmd_end_ts, "2016-04-06-16:15:00", "end timestamp");
 DEFINE_string(cmd_limit, "0", "number of result");
 DEFINE_string(cmd_index_list, "", "key1,==,val1,key2,>=,val2");
+DEFINE_string(cmd_pkey_type, "kBytes", "primary key type");
+DEFINE_string(cmd_table_ttl, "", "table's value time to live");
 
 DEFINE_string(cmd_monitor_flagfile, "../conf/monitor.conf", "json configure file");
 DEFINE_string(cmd_index_flagfile, "../conf/index.conf", "json configure file");
@@ -1269,6 +1271,28 @@ int AddWatchPathOp(std::vector<std::string>& cmd_vec) {
     return 0;
 }
 
+int ShowCounter(std::vector<std::string>& cmd_vec) {
+    std::string scheduler_addr = FLAGS_scheduler_addr;
+    mdt::RpcClient* rpc_client = new mdt::RpcClient;
+    mdt::LogSchedulerService::LogSchedulerService_Stub* service;
+    rpc_client->GetMethodList(scheduler_addr, &service);
+
+    mdt::LogSchedulerService::RpcShowCounterRequest* req = new mdt::LogSchedulerService::RpcShowCounterRequest();
+    mdt::LogSchedulerService::RpcShowCounterResponse* resp = new mdt::LogSchedulerService::RpcShowCounterResponse();
+    req->set_id(1);
+
+    rpc_client->SyncCall(service, &mdt::LogSchedulerService::LogSchedulerService_Stub::RpcShowCounter, req, resp);
+
+    for (uint32_t i = 0; i < resp->counter_map_size(); i++) {
+        std::cout << resp->counter_map(i).key() << " " << resp->counter_map(i).val() << std::endl;
+    }
+
+    delete req;
+    delete resp;
+    delete service;
+    return 0;
+}
+
 int ShowAgent(std::vector<std::string>& cmd_vec) {
     std::string scheduler_addr = FLAGS_scheduler_addr;
     mdt::RpcClient* rpc_client = new mdt::RpcClient;
@@ -1577,6 +1601,9 @@ int main(int ac, char* av[]) {
         } else if (FLAGS_cmd == "ShowAgent") {
             non_interactive_cmd_vec.push_back(FLAGS_cmd);
             ShowAgent(non_interactive_cmd_vec);
+        } else if (FLAGS_cmd == "ShowCounter") {
+            non_interactive_cmd_vec.push_back(FLAGS_cmd);
+            ShowCounter(non_interactive_cmd_vec);
         } else if (FLAGS_cmd == "ShowCollector") {
             non_interactive_cmd_vec.push_back(FLAGS_cmd);
             ShowCollector(non_interactive_cmd_vec);
@@ -1608,6 +1635,24 @@ int main(int ac, char* av[]) {
                 }
             }
             GetByTimeOp(non_interactive_cmd_vec);
+        } else if (FLAGS_cmd == "CreateTable") {
+            //printf("cmd: CreateTable <dbname> <tablename> <primary_key_type> <table_ttl> "
+            //    "[<index_table> <index_type=kBytes,kUInt64>]\n\n");
+            non_interactive_cmd_vec.push_back(FLAGS_cmd);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_db_name);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_table_name);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_pkey_type);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_table_ttl);
+
+            std::vector<std::string> index_vec;
+            boost::split(index_vec, FLAGS_cmd_index_list, boost::is_any_of(" "));
+            if ((index_vec.size() % 2) == 0) {
+                for (uint32_t idx = 0; idx < index_vec.size(); idx += 2) {
+                    non_interactive_cmd_vec.push_back(index_vec[idx + 0]);
+                    non_interactive_cmd_vec.push_back(index_vec[idx + 1]);
+                }
+            }
+            CreateTableOp(non_interactive_cmd_vec);
         } else if (FLAGS_cmd == "GetPri") {
             non_interactive_cmd_vec.push_back(FLAGS_cmd);
             non_interactive_cmd_vec.push_back(FLAGS_cmd_db_name);

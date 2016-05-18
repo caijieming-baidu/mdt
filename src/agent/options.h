@@ -4,6 +4,7 @@
 #include <string>
 #include <iostream>
 #include "leveldb/db.h"
+#include "utils/counter.h"
 
 namespace mdt {
 namespace agent {
@@ -21,6 +22,11 @@ struct LogOptions {
     DBTYPE db_type;
     std::string db_dir;
     leveldb::DB* db;
+
+    ::leveldb::Env* kMemEnv;
+    ::leveldb::DB* kMemDB;
+
+    ::mdt::CounterMap* counter_map;
 };
 
 struct AgentInfo {

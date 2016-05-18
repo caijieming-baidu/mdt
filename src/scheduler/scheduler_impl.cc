@@ -246,8 +246,17 @@ void SchedulerImpl::DoUpdateAgentInfo(::google::protobuf::RpcController* control
                                       mdt::LogSchedulerService::GetNodeListResponse* response,
                                       ::google::protobuf::Closure* done) {
     std::string select_server_addr;
-
     VLOG(50) << "agent " << request->agent_addr() << ", update info";
+
+    // dump state info into leveldb
+    for (uint32_t i = 0; i < request->info().counter_map_size(); i++) {
+        if (request->info().counter_map(i).key().find("average") != std::string::npos) {
+            counter_map_.Set(request->info().counter_map(i).key(), request->info().counter_map(i).val());
+        } else {
+            counter_map_.Add(request->info().counter_map(i).key(), request->info().counter_map(i).val());
+        }
+    }
+
     pthread_spin_lock(&agent_lock_);
     std::map<std::string, AgentInfo>::iterator it = agent_map_.find(request->agent_addr());
     if (it == agent_map_.end()) {
@@ -595,6 +604,30 @@ void SchedulerImpl::RpcTraceGalaxyApp(::google::protobuf::RpcController* control
     }
     done->Run();
     return;
+}
+
+void SchedulerImpl::RpcShowCounter(::google::protobuf::RpcController* controller,
+                      const mdt::LogSchedulerService::RpcShowCounterRequest* request,
+                      mdt::LogSchedulerService::RpcShowCounterResponse* response,
+                      ::google::protobuf::Closure* done) {
+    ThreadPool::Task task = boost::bind(&SchedulerImpl::DoRpcShowCounter, this, controller, request, response, done);
+    ctrl_thread_.AddTask(task);
+}
+
+void SchedulerImpl::DoRpcShowCounter(::google::protobuf::RpcController* controller,
+                      const mdt::LogSchedulerService::RpcShowCounterRequest* request,
+                      mdt::LogSchedulerService::RpcShowCounterResponse* response,
+                      ::google::protobuf::Closure* done) {
+    std::string key;
+    Counter val;
+    counter_scan_lock_.Lock();
+    while (counter_map_.ScanAndDelete(&key, &val, false) >= 0) {
+        mdt::LogSchedulerService::CounterMap* c = response->add_counter_map();
+        c->set_key(key);
+        c->set_val(val.Get());
+    }
+    counter_scan_lock_.Unlock();
+    done->Run();
 }
 
 // query agent info

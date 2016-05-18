@@ -22,6 +22,7 @@
 #include "leveldb/status.h"
 #include "proto/query.pb.h"
 
+DECLARE_string(agent_service_port);
 DECLARE_string(scheduler_addr);
 DECLARE_int32(file_stream_max_pending_request);
 DECLARE_string(db_name);
@@ -76,6 +77,13 @@ LogStream::LogStream(std::string module_name, LogOptions log_options,
     table_name_ = FLAGS_table_name;
 
     kLastLogWarningTime = timer::get_micros();
+
+    char hostname[255];
+    if (0 != gethostname(hostname, 256)) {
+        LOG(FATAL) << "fail to report message";
+    }
+    std::string hostname_str = hostname;
+    hostname_ = hostname_str + ":" + FLAGS_agent_service_port;
 
     // support line filter
     if (FLAGS_string_line_filter_list.size() > 0) {
@@ -174,6 +182,13 @@ void LogStream::GetTableName(std::string file_name, std::string* table_name) {
     *table_name = "trash";
 }
 
+template<class T>
+void ToString(std::string* str, const T& val) {
+    std::ostringstream ss;
+    ss << val;
+    *str = ss.str();
+}
+
 void LogStream::Run() {
     while (1) {
         bool has_event = false;
@@ -218,6 +233,8 @@ void LogStream::Run() {
             FileStream* file_stream = NULL;
             if (file_it != file_streams_.end()) {
                 file_stream = file_it->second;
+
+                file_stream->kreq_success.Inc();
             }
             local_key_queue.pop();
 
@@ -238,6 +255,8 @@ void LogStream::Run() {
             FileStream* file_stream = NULL;
             if (file_it != file_streams_.end()) {
                 file_stream = file_it->second;
+
+                file_stream->kreq_fail.Inc();
             }
             local_failed_key_queue.pop();
 
@@ -343,7 +362,10 @@ void LogStream::Run() {
                     delete file_stream;
                 } else {
                     // add into delete queue without wakeup thread
-                    DeleteWatchEvent(filename, ino, false);
+                    ThreadPool::Task task =
+                        boost::bind(&LogStream::DeleteWatchEvent, this, filename, ino, false);
+                    fail_delay_thread_.DelayTask(FLAGS_delay_retry_time, task);
+                    //DeleteWatchEvent(filename, ino, false);
                 }
             }
         }
@@ -361,9 +383,65 @@ void LogStream::Run() {
                 curr_pending_req += profile.nr_pending;
                 VLOG(30) << "ino " << profile.ino << ", filename " << profile.filename
                     << ", nr_pending " << profile.nr_pending << ", current_offset " << profile.current_offset;
+
+                // dump info into mem db
+                std::string table_name;
+                GetTableName(file_stream->GetFileName(), &table_name);
+                std::string mkey;
+
+                mkey = module_name_ + "." + table_name + "." + hostname_ + "." + "kreq_success";
+                log_options_.counter_map->Add(mkey, file_stream->kreq_success.Clear());
+
+                mkey = module_name_ + "." + table_name + "." + hostname_ + "." + "kreq_fail";
+                log_options_.counter_map->Add(mkey, file_stream->kreq_fail.Clear());
+
+                mkey = module_name_ + "." + table_name + "." + hostname_ + "." + "kfile_read_success";
+                log_options_.counter_map->Add(mkey, file_stream->kfile_read_success.Clear());
+
+                mkey = module_name_ + "." + table_name + "." + hostname_ + "." + "kfile_read_fail";
+                log_options_.counter_map->Add(mkey, file_stream->kfile_read_fail.Clear());
+
+                mkey = module_name_ + "." + table_name + "." + hostname_ + "." + "kleveldb_put_success";
+                log_options_.counter_map->Add(mkey, file_stream->kleveldb_put_success.Clear());
+
+                mkey = module_name_ + "." + table_name + "." + hostname_ + "." + "kleveldb_put_fail";
+                log_options_.counter_map->Add(mkey, file_stream->kleveldb_put_fail.Clear());
+
+                mkey = module_name_ + "." + table_name + "." + hostname_ + "." + "kleveldb_reopen_fail";
+                log_options_.counter_map->Add(mkey, file_stream->kleveldb_reopen_fail.Clear());
+
+                mkey = module_name_ + "." + table_name + "." + hostname_ + "." + "kleveldb_delete_success";
+                log_options_.counter_map->Add(mkey, file_stream->kleveldb_delete_success.Clear());
+
+                mkey = module_name_ + "." + table_name + "." + hostname_ + "." + "kleveldb_delete_fail";
+                log_options_.counter_map->Add(mkey, file_stream->kleveldb_delete_fail.Clear());
+
+                mkey = module_name_ + "." + table_name + "." + hostname_ + "." + "kcheckpoint_read_num";
+                log_options_.counter_map->Add(mkey, file_stream->kcheckpoint_read_num.Clear());
+
                 ++file_it;
             }
+
+            std::string key1;
+            key1 = module_name_ + "." + hostname_ + "." + "kseq_send_num";
+            log_options_.counter_map->Add(key1, kseq_send_num.Clear());
+
+            key1 = module_name_ + "." + hostname_ + "." + "kseq_nonsend_num";
+            log_options_.counter_map->Add(key1, kseq_nonsend_num.Clear());
+
+            key1 = module_name_ + "." + hostname_ + "." + "kseq_send_success";
+            log_options_.counter_map->Add(key1, kseq_send_success.Clear());
+
+            key1 = module_name_ + "." + hostname_ + "." + "kseq_send_fail";
+            log_options_.counter_map->Add(key1, kseq_send_fail.Clear());
+
+            key1 = module_name_ + "." + hostname_ + "." + "kindex_filter_num";
+            log_options_.counter_map->Add(key1, kindex_filter_num.Clear());
+
+            key1 = module_name_ + "." + hostname_ + "." + "kkeyword_filter_num";
+            log_options_.counter_map->Add(key1, kkeyword_filter_num.Clear());
         }
+
         pthread_spin_lock(server_addr_lock_);
         info_->nr_file_streams = (int64_t)file_streams_.size();
         if (curr_pending_req > 0) {
@@ -571,6 +649,7 @@ int LogStream::ParseMdtRequest(const std::string table_name,
                 }
             }
             if (!found) {
+                kkeyword_filter_num.Inc();
                 continue;
             }
         }
@@ -586,6 +665,7 @@ int LogStream::ParseMdtRequest(const std::string table_name,
             req_vec->push_back(regex_req);
         } else {
             delete regex_req;
+            kindex_filter_num.Inc();
         }
 
         // old index parser
@@ -690,6 +770,8 @@ int LogStream::AsyncPush(std::vector<mdt::SearchEngine::RpcStoreRequest*>& req_v
     mdt::SearchEngine::SearchEngineService_Stub* service;
     if (req_vec.size() == 0) {
         // assume async send success.
+        kseq_nonsend_num.Inc();
+
         key->ref.Set(1);
         mdt::SearchEngine::RpcStoreRequest* req = new mdt::SearchEngine::RpcStoreRequest;
         mdt::SearchEngine::RpcStoreResponse* resp = new mdt::SearchEngine::RpcStoreResponse;
@@ -707,6 +789,8 @@ int LogStream::AsyncPush(std::vector<mdt::SearchEngine::RpcStoreRequest*>& req_v
         mdt::SearchEngine::RpcStoreResponse* resp = new mdt::SearchEngine::RpcStoreResponse;
         VLOG(40) << "\n =====> async send data to " << server_addr << ", req " << (uint64_t)req
             << ", resp " << (uint64_t)resp << ", key " << (uint64_t)key << "\n " << req->DebugString();
+
+        kseq_send_num.Inc();
 
         pthread_spin_lock(server_addr_lock_);
         info_->average_packet_size += (int64_t)req->data().size();
@@ -753,10 +837,14 @@ void LogStream::AsyncPushCallback(const mdt::SearchEngine::RpcStoreRequest* req,
         info_->error_nr++;
         pthread_spin_unlock(server_addr_lock_);
 
+        kseq_send_fail.Inc();
+
         ThreadPool::Task task =
             boost::bind(&LogStream::HandleDelayFailTask, this, key);
         fail_delay_thread_.DelayTask(FLAGS_delay_retry_time, task);
     } else {
+        kseq_send_success.Inc();
+
         VLOG(30) << "file " << key->filename << " add to success event queue, req "
             << (uint64_t)req << ", resp " << (uint64_t)resp << ", key " << (uint64_t)key << ", key.ref " << key->ref.Get() << ", offset " << key->offset;
         pthread_spin_lock(&lock_);
@@ -897,7 +985,7 @@ int LogStream::InternalSearchIndex(const std::string& line,
             while (boost::regex_search(start, end, watch, expression)) {
                 if (watch.size() >= (rule.record_vec_size() + 1)) {
                     VLOG(50) << line << ", watch " << watch[0];
-                    for (uint32_t result_idx = 1; result_idx < watch.size(); result_idx++) {
+                    for (uint32_t result_idx = 1; (result_idx < watch.size()) && (result_idx <= rule.record_vec_size()); result_idx++) {
                         kv->insert(std::pair<std::string, std::string>(rule.record_vec(result_idx - 1).key_name(), watch[result_idx]));
                         VLOG(50) << "key " << rule.record_vec(result_idx - 1).key_name() << ", value " << watch[result_idx];
                     }
@@ -1058,7 +1146,7 @@ bool LogStream::CheckRegex(const std::string& line, const mdt::LogAgentService::
                 // check log.y1, log.y2 {==, >=, >, <=, <} rule.x1, rule.x2
                 if (watch.size() >= (rule.record_vec_size() + 1)) {
                     VLOG(50) << line << ", watch " << watch[0];
-                    for (uint32_t result_idx = 1; result_idx < watch.size(); result_idx++) {
+                    for (uint32_t result_idx = 1; (result_idx < watch.size()) && (result_idx <= rule.record_vec_size()); result_idx++) {
                         if (!CheckRecord(watch[result_idx], rule.record_vec(result_idx - 1))) {
                             is_match = false;
                             break;
@@ -1281,6 +1369,7 @@ int FileStream::RecoveryCheckPoint() {
         db_it = log_options_.db->NewIterator(leveldb::ReadOptions());
         MakeKeyValue(module_name_, filename_, 0, &startkey, 0, NULL);
         MakeKeyValue(module_name_, filename_, 0xffffffffffffffff, &endkey, 0, NULL);
+        leveldb::Status s;
         for (db_it->Seek(startkey);
                 db_it->Valid() && db_it->key().ToString() < endkey;
                 db_it->Next()) {
@@ -1288,13 +1377,26 @@ int FileStream::RecoveryCheckPoint() {
             leveldb::Slice value = db_it->value();
             uint64_t offset, size;
             ParseKeyValue(key, value, &offset, &size);
-            leveldb::Status s = log_options_.db->Delete(leveldb::WriteOptions(), key);
+            s = log_options_.db->Delete(leveldb::WriteOptions(), key);
             if (!s.ok()) {
+                kleveldb_delete_fail.Inc();
                 LOG(WARNING) << "delete db checkpoint error, " << filename_ << ", offset " << offset
                     << ", size " << size;
+                break;
             }
         }
         delete db_it;
+
+        if (!s.ok()) {
+            delete log_options_.db;
+            log_options_.db = NULL;
+            leveldb::Options options;
+            s = leveldb::DB::Open(options, log_options_.db_dir.c_str(), &log_options_.db);
+            if (!s.ok()) {
+                LOG(WARNING) << "leveldb reopen errno " << s.ToString();
+                kleveldb_reopen_fail.Inc();
+            }
+        }
     }
 
     end_ts = timer::get_micros();
@@ -1317,6 +1419,7 @@ void FileStream::ReSetFileStreamCheckPoint() {
     db_it = log_options_.db->NewIterator(leveldb::ReadOptions());
     MakeKeyValue(module_name_, filename_, 0, &startkey, 0, NULL);
     MakeKeyValue(module_name_, filename_, 0xffffffffffffffff, &endkey, 0, NULL);
+    leveldb::Status s;
     for (db_it->Seek(startkey);
             db_it->Valid() && db_it->key().ToString() < endkey;
             db_it->Next()) {
@@ -1324,13 +1427,26 @@ void FileStream::ReSetFileStreamCheckPoint() {
         leveldb::Slice value = db_it->value();
         uint64_t offset, size;
         ParseKeyValue(key, value, &offset, &size);
-        leveldb::Status s = log_options_.db->Delete(leveldb::WriteOptions(), key);
+        s = log_options_.db->Delete(leveldb::WriteOptions(), key);
         if (!s.ok()) {
+            kleveldb_delete_fail.Inc();
             LOG(WARNING) << "delete db checkpoint error, " << filename_ << ", offset " << offset
                 << ", size " << size;
+            break;
         }
     }
     delete db_it;
+
+    if (!s.ok()) {
+        delete log_options_.db;
+        log_options_.db = NULL;
+        leveldb::Options options;
+        s = leveldb::DB::Open(options, log_options_.db_dir.c_str(), &log_options_.db);
+        if (!s.ok()) {
+            LOG(WARNING) << "leveldb reopen errno " << s.ToString();
+            kleveldb_reopen_fail.Inc();
+        }
+    }
     return;
 }
 
@@ -1387,6 +1503,7 @@ int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
                 kLastLogWarningTime = timer::get_micros();
                 LOG(WARNING) << "redo cp, read file error, offset " << offset << ", size " << size << ", res " << res;
             }
+            kfile_read_fail.Inc();
             ret = -1;
         } else if (res == 0) {
            VLOG(30) << "file " << filename_ << ", read size 0";
@@ -1398,6 +1515,8 @@ int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
         if (res <= 0) {
             ret = -1;
         } else {
+            kfile_read_success.Inc();
+
             *key = new DBKey;
             (*key)->filename = filename_;
             (*key)->ino = ino_;
@@ -1426,15 +1545,28 @@ int FileStream::LogCheckPoint(uint64_t offset, uint64_t size) {
     MakeKeyValue(module_name_, filename_, offset, &key, size, &value);
     leveldb::Status s = log_options_.db->Put(leveldb::WriteOptions(), key, value);
     if (!s.ok()) {
+        // reopen leveldb, flush error
+        delete log_options_.db;
+        log_options_.db = NULL;
+        leveldb::Options options;
+        s = leveldb::DB::Open(options, log_options_.db_dir.c_str(), &log_options_.db);
+        if (!s.ok()) {
+            LOG(WARNING) << "leveldb reopen errno " << s.ToString();
+            kleveldb_reopen_fail.Inc();
+        }
+
         pthread_spin_lock(&lock_);
         std::map<uint64_t, uint64_t>::iterator it = mem_checkpoint_list_.find(offset);
         if (it != mem_checkpoint_list_.end()) {
             mem_checkpoint_list_.erase(it);
         }
         pthread_spin_unlock(&lock_);
+
+        kleveldb_put_fail.Inc();
         LOG(WARNING) << "log cp into leveldb error, file " << filename_ << ", offset " << offset << ", size " << size << ", err " << s.ToString();
         ret = -1;
     } else {
+        kleveldb_put_success.Inc();
         // write db success
         current_offset_ = offset + size;
         ret = size;
@@ -1459,7 +1591,19 @@ int FileStream::DeleteCheckoutPoint(DBKey* key) {
     MakeKeyValue(module_name_, filename_, key->offset, &key_str, 0, NULL);
     leveldb::Status s = log_options_.db->Delete(leveldb::WriteOptions(), key_str);
     if (!s.ok()) {
+        delete log_options_.db;
+        log_options_.db = NULL;
+        leveldb::Options options;
+        s = leveldb::DB::Open(options, log_options_.db_dir.c_str(), &log_options_.db);
+        if (!s.ok()) {
+            LOG(WARNING) << "leveldb reopen errno " << s.ToString();
+            kleveldb_reopen_fail.Inc();
+        }
+
+        kleveldb_delete_fail.Inc();
         LOG(WARNING) << "delete db checkpoint error, " << filename_ << ", offset " << key->offset;
+    } else {
+        kleveldb_delete_success.Inc();
     }
     VLOG(30) << "delete cp, file " << key->filename << ", cp offset " << key->offset;
     return 0;
@@ -1469,6 +1613,8 @@ int FileStream::CheckPointRead(std::vector<std::string>* line_vec, DBKey** key,
                                uint64_t offset, uint64_t size) {
     int ret = 0;
     if (fd_ > 0) {
+        kcheckpoint_read_num.Inc();
+
         VLOG(30) << "file " << filename_ << " read from cp, offset " << offset << ", size " << size;
         char* buf = new char[size];
         ssize_t res = pread(fd_, buf, size, offset);

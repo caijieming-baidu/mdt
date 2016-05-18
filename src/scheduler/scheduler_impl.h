@@ -136,6 +136,11 @@ public:
                           mdt::LogSchedulerService::RpcTraceGalaxyAppResponse* response,
                           ::google::protobuf::Closure* done);
 
+    void RpcShowCounter(::google::protobuf::RpcController* controller,
+                          const mdt::LogSchedulerService::RpcShowCounterRequest* request,
+                          mdt::LogSchedulerService::RpcShowCounterResponse* response,
+                          ::google::protobuf::Closure* done);
+
     // suport monitor
     void RpcMonitor(::google::protobuf::RpcController* controller,
                     const mdt::LogSchedulerService::RpcMonitorRequest* request,
@@ -163,6 +168,11 @@ private:
                                        const mdt::LogSchedulerService::RegisterNodeRequest* request,
                                        mdt::LogSchedulerService::RegisterNodeResponse* response,
                                        ::google::protobuf::Closure* done);
+
+    void DoRpcShowCounter(::google::protobuf::RpcController* controller,
+                          const mdt::LogSchedulerService::RpcShowCounterRequest* request,
+                          mdt::LogSchedulerService::RpcShowCounterResponse* response,
+                          ::google::protobuf::Closure* done);
 
     void DoUpdateAgentInfo(::google::protobuf::RpcController* controller,
                            const mdt::LogSchedulerService::GetNodeListRequest* request,
@@ -228,6 +238,9 @@ private:
 private:
     std::string db_dir_;
     leveldb::DB* disk_db_;
+
+    ::mdt::Mutex counter_scan_lock_;
+    ::mdt::CounterMap counter_map_;
 
     RpcClient* rpc_client_;
 
