@@ -6,6 +6,9 @@
 #define  MDT_COMMON_COUNTER_H_
 
 #include <stdio.h>
+#include <pthread.h>
+#include <map>
+#include <iostream>
 
 #include "atomic.h"
 #include "timer.h"
@@ -71,6 +74,105 @@ private:
     const char* msg1_;
     const char* msg2_;
 };
+
+struct CounterMap {
+public:
+    pthread_spinlock_t lock;
+    std::map<std::string, Counter> kv;
+    std::string cur_key;
+
+    int64_t result_num;
+    std::map<std::string, Counter> scan_kv;
+    std::map<std::string, Counter>::iterator scan_it;
+
+public:
+    CounterMap() {
+        cur_key = "";
+        result_num = 100;
+        pthread_spin_init(&lock, PTHREAD_PROCESS_SHARED);
+    }
+    ~CounterMap() {
+        pthread_spin_destroy(&lock);
+        kv.clear();
+        scan_kv.clear();
+    }
+
+    int64_t Inc(const std::string& key) {
+        int64_t res;
+        pthread_spin_lock(&lock);
+        Counter& c = kv[key];
+        res = c.Inc();
+        pthread_spin_unlock(&lock);
+        return res;
+    }
+
+    int64_t Add(const std::string& key, int64_t val) {
+        int64_t res;
+        pthread_spin_lock(&lock);
+        Counter& c = kv[key];
+        res = c.Add(val);
+        pthread_spin_unlock(&lock);
+        return res;
+    }
+
+    int64_t Set(const std::string& key, int64_t val) {
+        int64_t res;
+        pthread_spin_lock(&lock);
+        Counter& c = kv[key];
+        res = c.Set(val);
+        pthread_spin_unlock(&lock);
+        return res;
+    }
+
+    // thread not safe
+    int64_t ScanAndDelete(std::string* key, Counter* val, bool del = true) {
+        if (scan_kv.size() > 0) {
+            if (scan_it == scan_kv.end()) {
+                scan_kv.clear();
+            } else {
+                *key = scan_it->first;
+                val->Set((scan_it->second).Get());
+                ++scan_it;
+                return 0;
+            }
+        }
+
+        pthread_spin_lock(&lock);
+        int64_t i = 0;
+        std::map<std::string, Counter>::iterator it;
+        if (cur_key == "") {
+            it = kv.begin();
+        } else {
+            it = kv.find(cur_key);
+            if (it != kv.end()) {
+                ++it;
+            }
+        }
+        for (; (it != kv.end()) && (i < result_num); i++) {
+            cur_key = it->first;
+            Counter& c = scan_kv[cur_key];
+            c.Set((it->second).Get());
+            if (del) {
+                it = kv.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        pthread_spin_unlock(&lock);
+
+        if (scan_kv.size() > 0) {
+            scan_it = scan_kv.begin();
+            *key = scan_it->first;
+            val->Set((scan_it->second).Get());
+            ++scan_it;
+            return 0;
+        } else {
+            cur_key.clear();
+        }
+        return -1;
+    }
+};
+
 } // namespace mdt
 
 #endif  // MDT_COMMON_COUNTER_H_

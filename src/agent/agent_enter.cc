@@ -4,6 +4,7 @@
 #include <sofa/pbrpc/pbrpc.h>
 #include <glog/logging.h>
 #include <tera.h>
+#include <assert.h>
 
 DECLARE_string(agent_service_port);
 DECLARE_string(log_dir);
@@ -56,6 +57,7 @@ void SetupGoogleLog() {
 int main(int ac, char* av[]) {
     ::google::ParseCommandLineFlags(&ac, &av, true);
     SetupGoogleLog();
+
     // run agent
     mdt::agent::AgentImpl* agent = new mdt::agent::AgentImpl();
     if (agent == NULL) {

@@ -1269,6 +1269,28 @@ int AddWatchPathOp(std::vector<std::string>& cmd_vec) {
     return 0;
 }
 
+int ShowCounter(std::vector<std::string>& cmd_vec) {
+    std::string scheduler_addr = FLAGS_scheduler_addr;
+    mdt::RpcClient* rpc_client = new mdt::RpcClient;
+    mdt::LogSchedulerService::LogSchedulerService_Stub* service;
+    rpc_client->GetMethodList(scheduler_addr, &service);
+
+    mdt::LogSchedulerService::RpcShowCounterRequest* req = new mdt::LogSchedulerService::RpcShowCounterRequest();
+    mdt::LogSchedulerService::RpcShowCounterResponse* resp = new mdt::LogSchedulerService::RpcShowCounterResponse();
+    req->set_id(1);
+
+    rpc_client->SyncCall(service, &mdt::LogSchedulerService::LogSchedulerService_Stub::RpcShowCounter, req, resp);
+
+    for (uint32_t i = 0; i < resp->counter_map_size(); i++) {
+        std::cout << resp->counter_map(i).key() << " " << resp->counter_map(i).val() << std::endl;
+    }
+
+    delete req;
+    delete resp;
+    delete service;
+    return 0;
+}
+
 int ShowAgent(std::vector<std::string>& cmd_vec) {
     std::string scheduler_addr = FLAGS_scheduler_addr;
     mdt::RpcClient* rpc_client = new mdt::RpcClient;
@@ -1577,6 +1599,9 @@ int main(int ac, char* av[]) {
         } else if (FLAGS_cmd == "ShowAgent") {
             non_interactive_cmd_vec.push_back(FLAGS_cmd);
             ShowAgent(non_interactive_cmd_vec);
+        } else if (FLAGS_cmd == "ShowCounter") {
+            non_interactive_cmd_vec.push_back(FLAGS_cmd);
+            ShowCounter(non_interactive_cmd_vec);
         } else if (FLAGS_cmd == "ShowCollector") {
             non_interactive_cmd_vec.push_back(FLAGS_cmd);
             ShowCollector(non_interactive_cmd_vec);

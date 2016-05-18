@@ -81,6 +81,7 @@ public:
                     ::google::protobuf::Closure* done);
 
 private:
+    void InitMemDB(LogOptions* opt);
     void ParseLogDir(std::vector<std::string>& log_vec);
     void ParseModuleName(const std::string& filename, std::string* module_name);
     int FilterFileByMoudle(const std::string& filename, std::string* expect_module_name);
@@ -106,6 +107,8 @@ private:
     int UpdateIndex(const mdt::LogAgentService::RpcUpdateIndexRequest* request);
 
 private:
+    std::string hostname_;
+
     pthread_spinlock_t lock_;
     std::map<std::string, FileSystemInotify*> inotify_; // log dir notify
     std::map<std::string, LogStream*> log_streams_; // each module has its log stream

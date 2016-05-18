@@ -34,6 +34,11 @@ message RegisterNodeResponse {
     optional int32 error_code = 1;
 }
 
+message CounterMap {
+    optional string key = 1;
+    optional int64 val = 2;
+}
+
 message AgentInfo {
     optional int64 qps_quota = 1;
     optional int64 qps_use = 2;
@@ -49,6 +54,8 @@ message AgentInfo {
     optional int64 nr_file_streams = 9;
     optional int64 history_fd_overflow_count = 10;
     optional int64 curr_pending_req = 11;
+
+    repeated CounterMap counter_map = 12;
 }
 
 message GetNodeListRequest {
@@ -105,6 +112,13 @@ message RpcTraceGalaxyAppResponse {
 ////////////////////////////////////
 // agent & collector info show
 ////////////////////////////////////
+message RpcShowCounterRequest {
+    optional int64 id = 1;
+}
+message RpcShowCounterResponse {
+    repeated CounterMap counter_map = 1;
+}
+
 message RpcShowAgentInfoRequest {
     optional int64 id = 1;
 }
@@ -221,6 +235,7 @@ service LogSchedulerService {
     rpc RpcMonitorStream(RpcMonitorStreamRequest) returns(RpcMonitorStreamResponse);
     rpc RpcMonitor(RpcMonitorRequest) returns(RpcMonitorResponse);
     rpc RpcUpdateIndex(RpcUpdateIndexRequest) returns(RpcUpdateIndexResponse);
+    rpc RpcShowCounter(RpcShowCounterRequest) returns(RpcShowCounterResponse);
 }
 option py_generic_services = true;
 option cc_generic_services = true;

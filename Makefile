@@ -86,6 +86,7 @@ CXX_OBJ := $(SDK_OBJ) $(COMMON_OBJ) $(UTIL_OBJ) $(PROTO_OBJ) $(VERSION_OBJ) \
 	   $(COLLECTOR_OBJ) $(SCHEDULER_OBJ) 
 C_OBJ := $(C_SAMPLE_OBJ)
 LEVELDB_LIB := src/leveldb/libleveldb.a
+MEMENV_LIB := src/leveldb/libmemenv.a
 
 ############################################################
 PROGRAM = agent_main collector_main scheduler_main 
@@ -165,8 +166,8 @@ libftrace.a: $(FTRACE_OBJ) $(PROTO_OBJ)
 #TEST_log: $(FTRACE_TEST_OBJ) $(FTRACELIBRARY)
 #	$(CXX) -o $@ $(FTRACE_TEST_OBJ) $(FTRACELIBRARY) $(LDFLAGS)
 
-agent_main: $(AGENT_OBJ) $(PROTO_OBJ) $(VERSION_OBJ) $(LEVELDB_LIB) $(OTHER_OBJ) 
-	$(CXX) -o agent_main $(AGENT_OBJ) $(PROTO_OBJ) $(VERSION_OBJ) $(LDFLAGS) $(LEVELDB_LIB) $(OTHER_OBJ) 
+agent_main: $(AGENT_OBJ) $(PROTO_OBJ) $(VERSION_OBJ) $(LEVELDB_LIB) $(MEMENV_LIB) $(OTHER_OBJ) 
+	$(CXX) -o agent_main $(AGENT_OBJ) $(PROTO_OBJ) $(VERSION_OBJ) $(LDFLAGS) $(LEVELDB_LIB) $(MEMENV_LIB) $(OTHER_OBJ) 
 
 collector_main: $(COLLECTOR_OBJ) $(LIBRARY) $(OTHER_OBJ) $(LEVELDB_LIB)
 	$(CXX) -o collector_main $(COLLECTOR_OBJ) $(LIBRARY) $(OTHER_OBJ) $(LDFLAGS) $(LEVELDB_LIB)

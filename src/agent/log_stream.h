@@ -75,6 +75,19 @@ private:
                        const leveldb::Slice& value,
                        uint64_t* offset, uint64_t* size);
 
+public:
+    // profile info
+    Counter kreq_success;
+    Counter kreq_fail;
+    Counter kfile_read_success;
+    Counter kfile_read_fail;
+    Counter kleveldb_put_success;
+    Counter kleveldb_put_fail;
+    Counter kleveldb_delete_success;
+    Counter kleveldb_delete_fail;
+    Counter kleveldb_reopen_fail;
+    Counter kcheckpoint_read_num;
+
 private:
     std::string module_name_;
     std::string filename_; // abs path
@@ -145,7 +158,17 @@ private:
     bool CheckRegex(const std::string& line, const mdt::LogAgentService::Rule& rule);
     bool CheckRecord(const std::string& key, const mdt::LogAgentService::Record& record);
 
+public:
+    Counter kseq_send_num;
+    Counter kseq_nonsend_num;
+    Counter kseq_send_success;
+    Counter kseq_send_fail;
+    Counter kindex_filter_num;
+    Counter kkeyword_filter_num;
+
 private:
+    std::string hostname_;
+
     std::string module_name_;
     std::set<std::string> log_name_prefix_; // use for table name
 

@@ -17,6 +17,12 @@
 #include <dirent.h>
 #include <sys/types.h>
 
+#include "leveldb/db.h"
+#include "leveldb/options.h"
+#include "leveldb/slice.h"
+#include "db/db_impl.h"
+#include "helpers/memenv/memenv.h"
+
 DECLARE_string(scheduler_addr);
 DECLARE_string(db_dir);
 DECLARE_string(watch_log_dir);
@@ -28,11 +34,14 @@ extern mdt::agent::EventMask event_masks[21];
 namespace mdt {
 namespace agent {
 
+std::string kLogDir = "LogDir.";
+std::string kLogDir_hostname = "hostname.";
 int64_t last_time_info_update;
 
 void* SchedulerThread(void* arg) {
     AgentImpl* agent = (AgentImpl*)arg;
     agent->GetServerAddr();
+
     return NULL;
 }
 
@@ -40,6 +49,8 @@ AgentImpl::AgentImpl() {
     pthread_spin_init(&lock_, PTHREAD_PROCESS_SHARED);
     pthread_spin_init(&server_lock_, PTHREAD_PROCESS_SHARED);
     rpc_client_ = new RpcClient();
+
+    log_options_.counter_map = new CounterMap;
 
     info_.qps_use= 0;
     info_.qps_quota= 0;
@@ -61,7 +72,7 @@ AgentImpl::AgentImpl() {
 }
 
 AgentImpl::~AgentImpl() {
-
+    delete log_options_.counter_map;
 }
 
 void AgentImpl::GetServerAddrCallback(const mdt::LogSchedulerService::GetNodeListRequest* req,
@@ -115,6 +126,8 @@ void AgentImpl::GetServerAddr() {
 
         // set up agent info request
         int64_t nr_sec = (timer::get_micros() - last_time_info_update) / 1000000;
+        last_time_info_update = timer::get_micros();
+
         nr_sec = nr_sec > 0 ? nr_sec : 1;
         pthread_spin_lock(&server_lock_);
         req->set_agent_addr(agent_addr);
@@ -139,6 +152,25 @@ void AgentImpl::GetServerAddr() {
 
         pthread_spin_unlock(&server_lock_);
 
+        // set state info
+        std::string key;
+        Counter val;
+        while (log_options_.counter_map->ScanAndDelete(&key, &val, true) >= 0) {
+            int64_t value = val.Get();
+            mdt::LogSchedulerService::CounterMap* c = info->add_counter_map();
+            c->set_key(key);
+            c->set_val(value);
+            VLOG(50) << "<<<<<<<<<< key " << key << ", val " << value;
+
+            value = val.Get() / nr_sec;
+            c = info->add_counter_map();
+            key += "_average";
+            c->set_key(key);
+            c->set_val(value);
+            VLOG(50) << "<<<<<<<<<< key " << key << ", val " << value;
+        }
+        VLOG(50) << info->DebugString();
+
         boost::function<void (const mdt::LogSchedulerService::GetNodeListRequest*,
                               mdt::LogSchedulerService::GetNodeListResponse*,
                               bool, int)> callback =
@@ -151,6 +183,48 @@ void AgentImpl::GetServerAddr() {
     }
 }
 
+void AgentImpl::InitMemDB(LogOptions* opt) {
+    opt->kMemEnv = ::leveldb::NewMemEnv(::leveldb::Env::Default());
+    ::leveldb::Options options;
+    options.create_if_missing = true;
+    options.env = opt->kMemEnv;
+    options.compression = ::leveldb::kSnappyCompression;
+    ::leveldb::Status s = ::leveldb::DB::Open(options, "/Mem/db", &opt->kMemDB);
+    assert(s.ok());
+
+    // test memtable
+    const ::leveldb::Slice key("key");
+    const ::leveldb::Slice val("value");
+    s = opt->kMemDB->Put(::leveldb::WriteOptions(), key, val);
+    assert(s.ok());
+
+    std::string val1;
+    s = opt->kMemDB->Get(::leveldb::ReadOptions(), key, &val1);
+    assert(s.ok());
+    assert(val1 == val);
+
+    ::leveldb::Iterator* iterator = opt->kMemDB->NewIterator(::leveldb::ReadOptions());
+    iterator->SeekToFirst();
+    assert(iterator->Valid());
+    assert(key == iterator->key());
+    assert(val == iterator->value());
+    iterator->Next();
+    assert(!iterator->Valid());
+    delete iterator;
+
+    ::leveldb::DBImpl* dbi = reinterpret_cast<::leveldb::DBImpl*>(opt->kMemDB);
+    s = dbi->TEST_CompactMemTable();
+    assert(s.ok());
+
+    s = opt->kMemDB->Get(::leveldb::ReadOptions(), key, &val1);
+    assert(s.ok());
+    assert(val1 == val);
+
+    s = opt->kMemDB->Delete(::leveldb::WriteOptions(), key);
+    assert(s.ok());
+    return;
+}
+
 int AgentImpl::Init() {
     // open leveldb
     log_options_.db_type = DISKDB;
@@ -161,6 +235,15 @@ int AgentImpl::Init() {
     if (!status.ok()) {
         return -1;
     }
+
+    InitMemDB(&log_options_);
+
+    char hostname[255];
+    if (0 != gethostname(hostname, 256)) {
+        LOG(FATAL) << "fail to report message";
+    }
+    std::string hostname_str = hostname;
+    hostname_ = hostname_str + ":" + FLAGS_agent_service_port;
 
     // parse log dir
     std::vector<std::string> log_vec;
@@ -404,6 +487,11 @@ int AgentImpl::AddWatchPath(const std::string& dir) {
         return -1;
     }
 
+    // add info into mem db
+    std::string mkey = kLogDir + kLogDir_hostname + hostname_;
+    const ::leveldb::Slice mem_key(mkey);
+    const ::leveldb::Slice mem_val(dir);
+    ::leveldb::Status s = log_options_.kMemDB->Put(::leveldb::WriteOptions(), mem_key, mem_val);
 
     VLOG(30) << "add watch addr " << dir << ", watch fd " << fs_inotify->watch_fd;
     fs_inotify->stop = false;
@@ -427,6 +515,12 @@ int AgentImpl::AddWatchPath(const std::string& dir) {
 
 // log_name := module name's log file name prefix
 int AgentImpl::AddWatchModuleStream(const std::string& module_name, const std::string& log_name) {
+    // add info into mem db
+    std::string mkey = kLogDir + kLogDir_hostname + hostname_ + "." + module_name;
+    const ::leveldb::Slice mem_key(mkey);
+    const ::leveldb::Slice mem_val(log_name);
+    ::leveldb::Status s = log_options_.kMemDB->Put(::leveldb::WriteOptions(), mem_key, mem_val);
+
     VLOG(30) << "add module stream, module name " << module_name << ", file name " << log_name;
     LogStream* stream = NULL;
     pthread_spin_lock(&lock_);
