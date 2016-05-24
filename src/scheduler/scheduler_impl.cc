@@ -64,6 +64,7 @@ SchedulerImpl::SchedulerImpl()
     galaxy_trace_pool_(30),
     monitor_thread_(3) {
 
+    pthread_spin_init(&db_lock_, PTHREAD_PROCESS_PRIVATE);
     db_dir_ = FLAGS_db_dir;
     leveldb::Options options;
     options.create_if_missing = true;
@@ -1026,6 +1027,154 @@ void SchedulerImpl::RpcUpdateIndex(::google::protobuf::RpcController* controller
                                   ::google::protobuf::Closure* done) {
     response->set_status(::mdt::LogSchedulerService::kRpcOk);
     ThreadPool::Task task = boost::bind(&SchedulerImpl::DoRpcUpdateIndex, this, controller, request, response, done);
+    monitor_thread_.AddTask(task);
+}
+
+void SchedulerImpl::DoRpcUpdateConfigure(::google::protobuf::RpcController* controller,
+                                       const mdt::LogSchedulerService::RpcUpdateConfigureRequest* request,
+                                       mdt::LogSchedulerService::RpcUpdateConfigureResponse* response,
+                                       ::google::protobuf::Closure* done) {
+    leveldb::Status s;
+    std::string key, value;
+    const mdt::LogSchedulerService::ConfigureInfo& conf = request->conf();
+
+    if (conf.table() == "DB") {
+        if (conf.key_size() < 1) {
+            response->set_status(::mdt::LogSchedulerService::kRpcError);
+            done->Run();
+            return;
+        }
+        // key = {db}
+        key = "SYS.DB." + conf.key(0);
+        value = conf.val();
+    } else if (conf.table() == "Table") {
+        if (conf.key_size() < 2) {
+            response->set_status(::mdt::LogSchedulerService::kRpcError);
+            done->Run();
+            return;
+        }
+        // key = {db, table}
+        key = "SYS." + conf.key(0) + "." + "Table." + conf.key(1);
+        value = conf.val();
+
+    } else if (conf.table() == "Module") {
+        if (conf.key_size() < 3) {
+            response->set_status(::mdt::LogSchedulerService::kRpcError);
+            done->Run();
+            return;
+        }
+        // key = {db, table, module}
+        key = "SYS." + conf.key(0) + "." + conf.key(1) + "." + "Module." + conf.key(2);
+        value = conf.val();
+
+    } else if (conf.table() == "Module.Index") {
+        if (conf.key_size() < 3) {
+            response->set_status(::mdt::LogSchedulerService::kRpcError);
+            done->Run();
+            return;
+        }
+        // key = {db, table, module}
+        key = "SYS." + conf.key(0) + "." + conf.key(1) + "." + conf.key(2) + ".Index";
+        value = conf.val();
+
+    } else if (conf.table() == "Module.Monitor") {
+        if (conf.key_size() < 3) {
+            response->set_status(::mdt::LogSchedulerService::kRpcError);
+            done->Run();
+            return;
+        }
+        // key = {db, table, module}
+        key = "SYS." + conf.key(0) + "." + conf.key(1) + "." + conf.key(2) + ".Monitor";
+        value = conf.val();
+
+    } else if (conf.table() == "Module.Dir") {
+        if (conf.key_size() < 4) {
+            response->set_status(::mdt::LogSchedulerService::kRpcError);
+            done->Run();
+            return;
+        }
+        // key = {db, table, module, dir}
+        key = "SYS." + conf.key(0) + "." + conf.key(1) + "." + conf.key(2) + "." + "Dir." + conf.key(3);
+        value = conf.val();
+    } else if (conf.table() == "Module.File") {
+        if (conf.key_size() < 4) {
+            response->set_status(::mdt::LogSchedulerService::kRpcError);
+            done->Run();
+            return;
+        }
+        // key = {db, table, module, dir}
+        key = "SYS." + conf.key(0) + "." + conf.key(1) + "." + conf.key(2) + "." + "File." + conf.key(3);
+        value = conf.val();
+    } else if (conf.table() == "Module.Hostname") {
+        if (conf.key_size() < 4) {
+            response->set_status(::mdt::LogSchedulerService::kRpcError);
+            done->Run();
+            return;
+        }
+        // key = {db, table, module, dir}
+        key = "SYS." + conf.key(0) + "." + conf.key(1) + "." + conf.key(2) + "." + "Hostname." + conf.key(3);
+        value = conf.val();
+    } else {
+        response->set_status(::mdt::LogSchedulerService::kRpcError);
+        done->Run();
+        return;
+    }
+
+    if (conf.op() == "Set") {
+        pthread_spin_lock(&db_lock_);
+        s = disk_db_->Put(leveldb::WriteOptions(), key, value);
+        pthread_spin_unlock(&db_lock_);
+
+    } else if (conf.op() == "Del") {
+        pthread_spin_lock(&db_lock_);
+        s = disk_db_->Delete(leveldb::WriteOptions(), key);
+        pthread_spin_unlock(&db_lock_);
+
+    } else if (conf.op() == "Get") {
+        leveldb::Iterator* db_it;
+        if ((db_it = disk_db_->NewIterator(leveldb::ReadOptions()))) {
+            std::string startkey = key, endkey = key;
+            startkey.push_back('\0');
+            endkey.push_back(255);
+            for (db_it->Seek(startkey);
+                 db_it->Valid() && db_it->key().ToString() < endkey;
+                 db_it->Next()) {
+                ::mdt::LogSchedulerService::ConfigureKV* kv = response->add_kv();
+                kv->set_key(db_it->key().ToString());
+                kv->set_val(db_it->value().ToString());
+            }
+            delete db_it;
+        }
+    } else if (conf.op() == "Add") {
+        pthread_spin_lock(&db_lock_);
+        std::string v1;
+        ::leveldb::Status s1 = disk_db_->Get(leveldb::ReadOptions(), key, &v1);
+        if (!s1.ok()) {
+            s = disk_db_->Put(leveldb::WriteOptions(), key, value);
+        }
+        pthread_spin_unlock(&db_lock_);
+    } else {
+        // do nothing
+    }
+    if (!s.ok()) {
+        delete disk_db_;
+        disk_db_ = NULL;
+        leveldb::Options options;
+        options.block_cache = leveldb::NewLRUCache(FLAGS_cache_size);
+        leveldb::Status status = leveldb::DB::Open(options, db_dir_, &disk_db_);
+        if (!status.ok()) {
+            LOG(WARNING) << "leveldb reopen errno " << status.ToString();
+        }
+    }
+
+    done->Run();
+}
+void SchedulerImpl::RpcUpdateConfigure(::google::protobuf::RpcController* controller,
+                                       const mdt::LogSchedulerService::RpcUpdateConfigureRequest* request,
+                                       mdt::LogSchedulerService::RpcUpdateConfigureResponse* response,
+                                       ::google::protobuf::Closure* done) {
+    response->set_status(::mdt::LogSchedulerService::kRpcOk);
+    ThreadPool::Task task = boost::bind(&SchedulerImpl::DoRpcUpdateConfigure, this, controller, request, response, done);
     monitor_thread_.AddTask(task);
 }
 

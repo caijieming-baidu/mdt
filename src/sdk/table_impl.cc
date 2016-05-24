@@ -920,6 +920,7 @@ int TableImpl::WriteBatchIndexTable(const std::string& primary_key, uint64_t tim
         tera::Table* index_table = GetIndexTable(key.ToString());
         if (index_table == NULL) {
             context->Release();
+            iter->Next();
             continue;
         }
 
@@ -1933,7 +1934,8 @@ void TableImpl::ReadData(tera::RowReader* reader) {
     if (should_break) {
         s = Status::NotFound("break from read data");
     } else if (reader->GetError().GetType() != tera::ErrorCode::kOK) {
-	VLOG(30) << "tera row reader error, primary key " << primary_key;
+        std::string reason = strerr(reader->GetError());
+	VLOG(30) << "tera row reader error, primary key " << primary_key << ", errcode " << reason;
         s = Status::IOError("tera error");
     } else if (nr_record > 0) {
         BreakOrPushData(param, param->result, Status::OK(), "", primary_key);

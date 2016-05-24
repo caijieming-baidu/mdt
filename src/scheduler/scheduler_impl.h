@@ -156,6 +156,11 @@ public:
                        mdt::LogSchedulerService::RpcUpdateIndexResponse* response,
                        ::google::protobuf::Closure* done);
 
+    void RpcUpdateConfigure(::google::protobuf::RpcController* controller,
+                       const mdt::LogSchedulerService::RpcUpdateConfigureRequest* request,
+                       mdt::LogSchedulerService::RpcUpdateConfigureResponse* response,
+                       ::google::protobuf::Closure* done);
+
 private:
     void AsyncTraceGalaxyAppCallback(const mdt::LogAgentService::RpcTraceGalaxyAppRequest* req,
                 mdt::LogAgentService::RpcTraceGalaxyAppResponse* resp,
@@ -235,8 +240,26 @@ private:
                           mdt::LogSchedulerService::RpcUpdateIndexResponse* response,
                           ::google::protobuf::Closure* done);
 
+    void DoRpcUpdateConfigure(::google::protobuf::RpcController* controller,
+                       const mdt::LogSchedulerService::RpcUpdateConfigureRequest* request,
+                       mdt::LogSchedulerService::RpcUpdateConfigureResponse* response,
+                       ::google::protobuf::Closure* done);
+
 private:
+    // cluster manager:
+    // db.Put(SYS.DB.ktrace, "");                                  => (Set, Get, Del, Add)DB
+    //
+    // db.Put(SYS.ktrace.Table.trace, "");                         => (Set, Get, Del, Add)Table
+    //
+    // db.Put(SYS.ktrace.trace.Module.ac, "");                     => (Set, Get, Del, Add)Module
+    //
+    // db.Put(SYS.ktrace.trace.ac.Index, index);                => (Set, Get, Del, Add)Index
+    // db.Put(SYS.ktrace.trace.ac.Monitor, monitor);            => (Set, Get, Del, Add)SetMonitor
+    // db.Put(SYS.ktrace.trace.ac.Dir.dir, "");                    => (Set, Get, Del, Add)SetDir
+    // db.Put(SYS.ktrace.trace.ac.File.file, "");                  => (Set, Get, Del, Add)SetFile
+    // db.Put(SYS.ktrace.trace.ac.Hostname.hostname, "");          => (Set, Get, Del, Add)SetHostname
     std::string db_dir_;
+    pthread_spinlock_t db_lock_;
     leveldb::DB* disk_db_;
 
     ::mdt::Mutex counter_scan_lock_;

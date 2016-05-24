@@ -222,6 +222,24 @@ message RpcUpdateIndexResponse {
     optional RpcResponseStatus status = 1; 
 }
 
+message ConfigureInfo {
+    optional string table = 1; // DB, Table, Module, Module.Index, Module.Monitor, Module.Dir, Module.File, Module.Hostname    
+    optional string op = 2; // set, get, del, add
+    repeated string key = 3;
+    optional string val = 4;
+}
+message ConfigureKV {
+    optional string key = 1;
+    optional string val = 2;
+}
+message RpcUpdateConfigureRequest {
+    optional ConfigureInfo conf = 1;
+}
+message RpcUpdateConfigureResponse {
+    optional RpcResponseStatus status = 1;
+    repeated ConfigureKV kv = 2;
+}
+
 // rpc service
 service LogSchedulerService {
     rpc Echo(EchoRequest) returns(EchoResponse);
@@ -236,6 +254,7 @@ service LogSchedulerService {
     rpc RpcMonitor(RpcMonitorRequest) returns(RpcMonitorResponse);
     rpc RpcUpdateIndex(RpcUpdateIndexRequest) returns(RpcUpdateIndexResponse);
     rpc RpcShowCounter(RpcShowCounterRequest) returns(RpcShowCounterResponse);
+    rpc RpcUpdateCongfigure(RpcUpdateConfigureRequest) returns(RpcUpdateConfigureResponse);
 }
 option py_generic_services = true;
 option cc_generic_services = true;
