@@ -376,13 +376,16 @@ void AgentImpl::ParseModuleName(const std::string& filename, std::string* module
 }
 
 int AgentImpl::FilterFileByMoudle(const std::string& filename, std::string* expect_module_name) {
+    uint64_t max_len = 0;
     pthread_spin_lock(&lock_);
     std::map<std::string, std::string>::iterator it = module_file_set_.begin();
     for (; it != module_file_set_.end(); ++it) {
         const std::string& module_file_name = it->first;
         const std::string& module_name = it->second;
-        if (filename.find(module_file_name) != std::string::npos) {
+        if (filename.find(module_file_name) != std::string::npos &&
+            max_len < module_file_name.size()) {
             *expect_module_name = module_name;
+            max_len = module_file_name.size();
             break;
         }
     }

@@ -171,15 +171,20 @@ LogStream::~LogStream() {
 }
 
 void LogStream::GetTableName(std::string file_name, std::string* table_name) {
+    uint64_t max_len = 0;
     std::set<std::string>::iterator it = log_name_prefix_.begin();
     for (; it != log_name_prefix_.end(); ++it) {
         const std::string& log_name = *it;
-        if (file_name.find(log_name) != std::string::npos) {
+        if ((file_name.find(log_name) != std::string::npos) &&
+            (max_len < log_name.size())) {
             *table_name = log_name;
-            return;
+            max_len = log_name.size();
         }
     }
-    *table_name = "trash";
+    if (max_len == 0) {
+        *table_name = "trash";
+    }
+    return;
 }
 
 template<class T>
@@ -828,7 +833,7 @@ void LogStream::AsyncPushCallback(const mdt::SearchEngine::RpcStoreRequest* req,
                                   DBKey* key) {
     // handle data push error
     if (failed || (resp->status() != mdt::SearchEngine::RpcOK)) {
-        if (kLastLogWarningTime + 1000000 < timer::get_micros()) {
+        if (kLastLogWarningTime + 60000000 < timer::get_micros()) {
             kLastLogWarningTime = timer::get_micros();
             LOG(WARNING) << "async write error " << error << ", key " << (uint64_t)key << ", file " << key->filename << " add to failed event queue"
                 << ", req " << (uint64_t)req << ", resp " << (uint64_t)resp << ", key.ref " << key->ref.Get() << ", offset " << key->offset;
@@ -1499,7 +1504,7 @@ int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
         char* buf = new char[size];
         ssize_t res = pread(fd_, buf, size, offset);
         if (res < 0) {
-            if (kLastLogWarningTime + 1000000 < timer::get_micros()) {
+            if (kLastLogWarningTime + 60000000 < timer::get_micros()) {
                 kLastLogWarningTime = timer::get_micros();
                 LOG(WARNING) << "redo cp, read file error, offset " << offset << ", size " << size << ", res " << res;
             }

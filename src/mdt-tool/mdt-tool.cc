@@ -47,6 +47,7 @@ DEFINE_string(tera_flagfile, "../conf/tera.flag", "tera flagfile");
 DEFINE_int64(max_timestamp_tables, 10, "max number of ts tables");
 
 DECLARE_string(flagfile);
+DEFINE_string(mdttool_flagfile, "../conf/trace.flag", "mdt-tool flagfile");
 
 DECLARE_string(scheduler_addr);
 DECLARE_string(agent_service_port);
@@ -1579,7 +1580,7 @@ int main(int ac, char* av[]) {
     // parse cmd in interactive mode
     ::google::ParseCommandLineFlags(&ac, &av, true);
     // Parse flagfile
-    ParseFlagFile("../conf/trace.flag");
+    ParseFlagFile(FLAGS_mdttool_flagfile);
     if (FLAGS_tool_mode == "") {
         std::vector<std::string> non_interactive_cmd_vec;
         if (FLAGS_cmd == "AddWatchPath") {

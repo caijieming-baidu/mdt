@@ -150,7 +150,8 @@ Status DatabaseImpl::Init() {
     std::string schema_table_name = db_name_ + "#SchemaTable#";
     tera::TableDescriptor schema_desc(schema_table_name);
     tera::LocalityGroupDescriptor* schema_lg = schema_desc.AddLocalityGroup("lg");
-    schema_lg->SetBlockSize(32 * 1024);
+    //schema_lg->SetBlockSize(32);
+    schema_lg->SetCompress(tera::kSnappyCompress);
     schema_desc.SetRawKey(tera::kGeneralKv);
     // ignore exist error
     tera_opt_.client_->CreateTable(schema_desc, &error_code);
@@ -194,7 +195,7 @@ Status DatabaseImpl::CreateTable(const TableDescription& table_desc) {
     primary_table_desc.SetRawKey(tera::kBinary);
     primary_table_desc.SetSplitSize(10240);
     tera::LocalityGroupDescriptor* lg = primary_table_desc.AddLocalityGroup("lg");
-    lg->SetBlockSize(32 * 1024);
+    //lg->SetBlockSize(32);
     lg->SetCompress(tera::kSnappyCompress);
     tera::ColumnFamilyDescriptor* cf = primary_table_desc.AddColumnFamily("Location", "lg");
     //cf->SetTimeToLive(FLAGS_tera_table_ttl);
@@ -212,7 +213,7 @@ Status DatabaseImpl::CreateTable(const TableDescription& table_desc) {
         index_table_desc.SetRawKey(tera::kBinary);
         index_table_desc.SetSplitSize(10240);
         tera::LocalityGroupDescriptor* index_lg = index_table_desc.AddLocalityGroup("lg");
-        index_lg->SetBlockSize(32 * 1024);
+        //index_lg->SetBlockSize(32);
         index_lg->SetCompress(tera::kSnappyCompress);
         tera::ColumnFamilyDescriptor* index_cf = index_table_desc.AddColumnFamily("PrimaryKey", "lg");
         //index_cf->SetTimeToLive(FLAGS_tera_table_ttl);
@@ -231,7 +232,7 @@ Status DatabaseImpl::CreateTable(const TableDescription& table_desc) {
         index_table_desc.SetRawKey(tera::kBinary);
         index_table_desc.SetSplitSize(10240);
         tera::LocalityGroupDescriptor* index_lg = index_table_desc.AddLocalityGroup("lg");
-        index_lg->SetBlockSize(32 * 1024);
+        //index_lg->SetBlockSize(32);
         index_lg->SetCompress(tera::kSnappyCompress);
         tera::ColumnFamilyDescriptor* index_cf = index_table_desc.AddColumnFamily("PrimaryKey", "lg");
         //index_cf->SetTimeToLive(FLAGS_tera_table_ttl);
