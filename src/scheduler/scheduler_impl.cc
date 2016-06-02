@@ -114,6 +114,16 @@ void SchedulerImpl::DoRegisterNode(::google::protobuf::RpcController* controller
                                  mdt::LogSchedulerService::RegisterNodeResponse* response,
                                  ::google::protobuf::Closure* done) {
     int64_t begin_ts = mdt::timer::get_micros();
+
+    // dump state info into leveldb
+    for (uint32_t i = 0; i < request->info().counter_map_size(); i++) {
+        if (request->info().counter_map(i).key().find("average") != std::string::npos) {
+            counter_map_.Set(request->info().counter_map(i).key(), request->info().counter_map(i).val());
+        } else {
+            counter_map_.Add(request->info().counter_map(i).key(), request->info().counter_map(i).val());
+        }
+    }
+
     pthread_spin_lock(&collector_lock_);
     std::map<std::string, CollectorInfo>::iterator it = collector_map_.find(request->server_addr());
     if (it == collector_map_.end()) {
@@ -255,6 +265,15 @@ void SchedulerImpl::DoUpdateAgentInfo(::google::protobuf::RpcController* control
             counter_map_.Set(request->info().counter_map(i).key(), request->info().counter_map(i).val());
         } else {
             counter_map_.Add(request->info().counter_map(i).key(), request->info().counter_map(i).val());
+        }
+    }
+
+    // collector error too much, cause agent error and scheduler cpu's usage use too much
+    if ((request->current_server_addr() != "") || (request->current_server_addr() != "nil")) {
+        if (agent_thread_.PendingNum() > 10) {
+            response->set_primary_server_addr(request->current_server_addr());
+            done->Run();
+            return;
         }
     }
 

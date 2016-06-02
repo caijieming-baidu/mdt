@@ -20,6 +20,7 @@ DECLARE_int64(collector_tera_max_pending);
 
 namespace mdt {
 
+int64_t klast_time_warning;
 int64_t last_time_collect_info;
 ::mdt::Counter store_qps;
 ::mdt::Counter store_max_packet_size;
@@ -87,6 +88,36 @@ void SearchEngineImpl::ReportMessage() {
         store_max_packet_size.Set(0);
         store_average_packet_size.Set(0);
 
+        std::string mkey;
+        mkey = "Collector." + local_addr + "." + "kstore_busy_count";
+        kcounter_map.Add(mkey, kstore_busy_count.Clear());
+        mkey = "Collector." + local_addr + "." + "ktera_busy_count";
+        kcounter_map.Add(mkey, ktera_busy_count.Clear());
+        mkey = "Collector." + local_addr + "." + "kdb_open_error";
+        kcounter_map.Add(mkey, kdb_open_error.Clear());
+        mkey = "Collector." + local_addr + "." + "ktable_open_error";
+        kcounter_map.Add(mkey, ktable_open_error.Clear());
+        mkey = "Collector." + local_addr + "." + "kstore_num";
+        kcounter_map.Add(mkey, kstore_num.Clear());
+
+        // set state info
+        std::string key;
+        Counter val;
+        while (kcounter_map.ScanAndDelete(&key, &val, true) >= 0) {
+            int64_t value = val.Get();
+            mdt::LogSchedulerService::CounterMap* c = info->add_counter_map();
+            c->set_key(key);
+            c->set_val(value);
+            VLOG(50) << "<<<<<<<<<< key " << key << ", val " << value;
+
+            value = val.Get() / nr_sec;
+            c = info->add_counter_map();
+            key += "_average";
+            c->set_key(key);
+            c->set_val(value);
+            VLOG(50) << "<<<<<<<<<< key " << key << ", val " << value;
+        }
+
         mdt::LogSchedulerService::RegisterNodeResponse* resp = new mdt::LogSchedulerService::RegisterNodeResponse();
 
         boost::function<void (const mdt::LogSchedulerService::RegisterNodeRequest*,
@@ -151,7 +182,10 @@ Status SearchEngineImpl::OpenTable(const std::string& db_name, const std::string
     ::mdt::Database* db_ptr = NULL;
     std::map<std::string, ::mdt::Database*>::iterator it = db_map_.find(db_name);
     if (it == db_map_.end()) {
-        LOG(WARNING) << "open db error, db " << db_name << ", table " << table_name;
+        if (klast_time_warning + 60000000 < timer::get_micros()) {
+            klast_time_warning = timer::get_micros();
+            LOG(WARNING) << "open db error, db " << db_name << ", table " << table_name;
+        }
         return Status::NotFound("db not found");
     }
     db_ptr = it->second;
@@ -162,7 +196,10 @@ Status SearchEngineImpl::OpenTable(const std::string& db_name, const std::string
     if (table_it == table_map_.end()) {
         table_ptr = ::mdt::OpenTable(db_ptr, table_name);
         if (table_ptr == NULL) {
-            LOG(WARNING) << "open table error, db " << db_name << ", table " << table_name;
+            if (klast_time_warning + 60000000 < timer::get_micros()) {
+                klast_time_warning = timer::get_micros();
+                LOG(WARNING) << "open table error, db " << db_name << ", table " << table_name;
+            }
             return Status::NotFound("table cannot open");
         }
         table_map_.insert(std::pair<std::string, ::mdt::Table*>(internal_tablename, table_ptr));
@@ -231,11 +268,13 @@ void SearchEngineImpl::Search(::google::protobuf::RpcController* ctrl,
                                 ::google::protobuf::Closure* done) {
     Status s = OpenDatabase(req->db_name());
     if (!s.ok()) {
+        kdb_open_error.Inc();
         done->Run();
         return;
     }
     s = OpenTable(req->db_name(), req->table_name());
     if (!s.ok()) {
+        ktable_open_error.Inc();
         done->Run();
         return;
     }
@@ -292,12 +331,14 @@ void SearchEngineImpl::Store(::google::protobuf::RpcController* ctrl,
     resp->set_status(mdt::SearchEngine::RpcOK);
     Status s = OpenDatabase(req->db_name());
     if (!s.ok()) {
+        kdb_open_error.Inc();
         VLOG(30) << "open db error, db " << req->db_name() << ", table " << req->table_name();
         done->Run();
         return;
     }
     s = OpenTable(req->db_name(), req->table_name());
     if (!s.ok()) {
+        ktable_open_error.Inc();
         VLOG(30) << "open table error, db " << req->db_name() << ", table " << req->table_name();
         done->Run();
         return;
@@ -318,9 +359,13 @@ void SearchEngineImpl::Store(::google::protobuf::RpcController* ctrl,
     table->Profile(&profile);
     tera_thread_pool_pending.Set(profile.tera_nr_pending);
     if (profile.tera_nr_pending > (uint64_t)FLAGS_collector_tera_max_pending) {
+        ktera_busy_count.Inc();
         resp->set_status(mdt::SearchEngine::ServerBusy);
         done->Run();
-        LOG(WARNING) << "server busy, nr_pending profile.tera_nr_pending " << profile.tera_nr_pending;
+        if (klast_time_warning + 60000000 < timer::get_micros()) {
+            klast_time_warning = timer::get_micros();
+            LOG(WARNING) << "server busy, nr_pending profile.tera_nr_pending " << profile.tera_nr_pending;
+        }
         return;
     }
 
@@ -335,6 +380,7 @@ void SearchEngineImpl::Store(::google::protobuf::RpcController* ctrl,
     int64_t cost_ts = timer::get_micros();
     std::string pkey = req->primary_key();
     table->Put(request, response, callback, param);
+    kstore_num.Inc();
     VLOG(5) << "store, pkey " << pkey << ", cost time " << timer::get_micros() - cost_ts;
     return;
 }
@@ -348,6 +394,7 @@ SearchEngineServiceImpl::SearchEngineServiceImpl(SearchEngineImpl* se)
       se_read_thread_pool_(new ThreadPool(FLAGS_se_num_threads)),
       se_info_thread_pool_(new ThreadPool(2)) {
 
+    klast_time_warning = timer::get_micros();
     ThreadPool::Task task = boost::bind(&SearchEngineServiceImpl::BGInfoCollector, this);
     se_info_thread_pool_->DelayTask(1000, task);
 }
@@ -394,9 +441,13 @@ void SearchEngineServiceImpl::Store(::google::protobuf::RpcController* ctrl,
     resp->set_status(mdt::SearchEngine::RpcOK);
     //VLOG(30) << "store, pkey " << req->primary_key();
     if (se_thread_pool_->PendingNum() > FLAGS_collector_store_max_pending) {
+        se_->kstore_busy_count.Inc();
         resp->set_status(mdt::SearchEngine::ServerBusy);
         done->Run();
-        LOG(WARNING) << "server busy, store busy, nr_pending " << se_thread_pool_->PendingNum();
+        if (klast_time_warning + 60000000 < timer::get_micros()) {
+            klast_time_warning = timer::get_micros();
+            LOG(WARNING) << "server busy, store busy, nr_pending " << se_thread_pool_->PendingNum();
+        }
         return;
     }
     ThreadPool::Task task = boost::bind(&SearchEngineImpl::Store, se_, ctrl, req, resp, done);

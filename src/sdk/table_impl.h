@@ -309,10 +309,10 @@ private:
     TableDescription table_desc_;
     TeraAdapter tera_;
     FilesystemAdapter fs_;
-    ThreadPool thread_pool_;
+    ThreadPool* thread_pool_;
     // async cleaner
-    ThreadPool cleaner_thread_;
-    ThreadPool async_read_thread_;
+    ThreadPool* cleaner_thread_;
+    ThreadPool* async_read_thread_;
 
     // file handle cache relative
     mutable Mutex file_mutex_;
@@ -345,10 +345,10 @@ private:
     uint64_t ttl_;
 
     // async tera write
-    ThreadPool async_tera_writer_;
+    ThreadPool* async_tera_writer_;
 
     // statictis info dump
-    ThreadPool info_collector_thread_;
+    ThreadPool* info_collector_thread_;
 };
 
 class BatchIndexContext {

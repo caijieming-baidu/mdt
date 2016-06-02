@@ -23,6 +23,8 @@ message CollectorInfo {
     optional int64 store_sched_ts = 6; 
     optional int64 store_task_ts = 7; 
     optional int64 store_task_num = 8; 
+    
+    repeated CounterMap counter_map = 12;
 }
 
 message RegisterNodeRequest {

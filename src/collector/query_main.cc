@@ -14,8 +14,8 @@ DECLARE_int64(collector_rpc_nr_io_server);
 DECLARE_int64(collector_rpc_max_pending_size);
 
 void SetupLog(const std::string& name) {
-    std::string program_name = "mdt";
-    if (!name.empty()) {
+    std::string program_name = "collector";
+    if (name.empty()) {
         program_name = name;
     }
 

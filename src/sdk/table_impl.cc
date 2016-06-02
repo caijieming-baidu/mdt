@@ -42,6 +42,11 @@ DECLARE_bool(enable_async_index_write);
 DECLARE_int64(async_tera_writer_num);
 
 namespace mdt {
+static ThreadPool GLOBAL_read_row_data_threads(FLAGS_read_file_thread_num);
+static ThreadPool GLOBAL_cleaner_thread(FLAGS_cleaner_thread_num);
+static ThreadPool GLOBAL_read_cell_data_threads(FLAGS_async_read_thread_num);
+static ThreadPool GLOBAL_async_tera_write_thread(FLAGS_async_tera_writer_num);
+static ThreadPool GLOBAL_info_collector_threads(1);
 
 std::ostream& operator << (std::ostream& o, const FileLocation& location) {
     o << "file: " << location.fname_
@@ -171,13 +176,13 @@ TableImpl::TableImpl(const TableDescription& table_desc,
     table_desc_(table_desc),
     tera_(tera_adapter),
     fs_(fs_adapter),
-    thread_pool_(FLAGS_read_file_thread_num),
-    cleaner_thread_(FLAGS_cleaner_thread_num),
-    async_read_thread_(FLAGS_async_read_thread_num),
+    thread_pool_(&GLOBAL_read_row_data_threads),
+    cleaner_thread_(&GLOBAL_cleaner_thread),
+    async_read_thread_(&GLOBAL_read_cell_data_threads),
     queue_timer_stop_(false),
     queue_timer_cv_(&queue_timer_mu_),
-    async_tera_writer_(FLAGS_async_tera_writer_num),
-    info_collector_thread_(1) {
+    async_tera_writer_(&GLOBAL_async_tera_write_thread),
+    info_collector_thread_(&GLOBAL_info_collector_threads) {
     // create timer
     pthread_create(&timer_tid_, NULL, &TableImpl::TimerThreadWrapper, this);
 
@@ -189,18 +194,18 @@ TableImpl::TableImpl(const TableDescription& table_desc,
 
     // background info collector
     ThreadPool::Task task = boost::bind(&TableImpl::BGInfoCollector, this);
-    info_collector_thread_.DelayTask(1000, task);
+    info_collector_thread_->DelayTask(1000, task);
 }
 
 TableImpl::~TableImpl() {
     // free write handle
     //ReleaseDataWriter();
     // TODO: write queue release
-    thread_pool_.Stop(false);
+    thread_pool_->Stop(false);
     FreeTeraTable();
 
-    cleaner_thread_.Stop(false);
-    async_read_thread_.Stop(false);
+    cleaner_thread_->Stop(false);
+    async_read_thread_->Stop(false);
 
     // stop timer, flush request
     queue_timer_mu_.Lock();
@@ -224,16 +229,16 @@ TableImpl::~TableImpl() {
 }
 
 void TableImpl::Profile(TableProfile* profile) {
-    profile->tera_nr_pending = async_tera_writer_.PendingNum();
+    profile->tera_nr_pending = async_tera_writer_->PendingNum();
     return;
 }
 
 void TableImpl::BGInfoCollector() {
-    LOG(INFO) << "Thread pool[async write] " << async_tera_writer_.ProfilingLog()
-        << ", pending req(async write) " << async_tera_writer_.PendingNum();
+    LOG(INFO) << "Thread pool[async write] " << async_tera_writer_->ProfilingLog()
+        << ", pending req(async write) " << async_tera_writer_->PendingNum();
 
     ThreadPool::Task task = boost::bind(&TableImpl::BGInfoCollector, this);
-    info_collector_thread_.DelayTask(1000, task);
+    info_collector_thread_->DelayTask(1000, task);
 }
 
 void TableImpl::CleanerThread(tera::ResultStream* stream) {
@@ -613,7 +618,7 @@ int TableImpl::InternalCompressBatchWrite(WriteContext* context, std::vector<Wri
         if (FLAGS_enable_async_index_write) {
             ThreadPool::Task task = boost::bind(&TableImpl::AsyncWriteBatchIndexTable, this,
                     it->first, timestamp_map[it->first], b_context, index_block[it->first], location);
-            async_tera_writer_.AddTask(task);
+            async_tera_writer_->AddTask(task);
         } else {
             WriteBatchIndexTable(it->first, timestamp_map[it->first], b_context, index_block[it->first], location);
             delete (index_block[it->first]);
@@ -1175,7 +1180,7 @@ Status TableImpl::GetByTimestamp(int64_t start_timestamp, int64_t end_timestamp,
                     result_list);
         }
         //delete result;
-	cleaner_thread_.AddTask(boost::bind(&TableImpl::CleanerThread, this, result));
+	cleaner_thread_->AddTask(boost::bind(&TableImpl::CleanerThread, this, result));
         delete scan_desc;
     }
 
@@ -1497,7 +1502,7 @@ void TableImpl::GetByFilterIndex(tera::Table* index_table,
     }
     // batch scan must wait other rpc callback
     //delete stream;
-    cleaner_thread_.AddTask(boost::bind(&TableImpl::CleanerThread, this, stream));
+    cleaner_thread_->AddTask(boost::bind(&TableImpl::CleanerThread, this, stream));
 
     // stop other index table scan streams
     {
@@ -1789,7 +1794,7 @@ void TableImpl::ReadPrimaryTableCallback(tera::RowReader* reader) {
     const std::string& primary_key = reader->RowName();
     VLOG(12) << "finish read primary table: " <<  param->table->table_desc_.table_name
              << ", primary key: " << DebugString(primary_key);
-    param->table->thread_pool_.AddTask(boost::bind(&TableImpl::ReadData, param->table, reader));
+    param->table->thread_pool_->AddTask(boost::bind(&TableImpl::ReadData, param->table, reader));
 }
 
 struct AsyncReadParam {
@@ -1917,7 +1922,7 @@ void TableImpl::ReadData(tera::RowReader* reader) {
                 async_read_param->nr_reader = &nr_reader;
                 async_read_param->location = &location;
                 async_read_param->primary_key = primary_key;
-                async_read_thread_.AddTask(boost::bind(&TableImpl::AsyncRead, this, async_read_param));
+                async_read_thread_->AddTask(boost::bind(&TableImpl::AsyncRead, this, async_read_param));
             }
             {
                 MutexLock l(&lock);

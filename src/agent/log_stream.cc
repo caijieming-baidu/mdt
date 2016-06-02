@@ -4,6 +4,9 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/foreach.hpp>
 #include <boost/regex.hpp>
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_generators.hpp>
+#include <boost/uuid/uuid_io.hpp>
 
 #include "proto/scheduler.pb.h"
 #include "agent/log_stream.h"
@@ -593,7 +596,8 @@ struct LogTailerSpan {
     }
 };
 
-std::string LogStream::TimeToString(struct timeval* filetime) {
+// only use in agent, primary key may cause seq write in tera
+std::string LogStream::TimeToStringWithTid(struct timeval* filetime) {
 #ifdef OS_LINUX
     pid_t tid = syscall(SYS_gettid);
 #else
@@ -601,6 +605,7 @@ std::string LogStream::TimeToString(struct timeval* filetime) {
 #endif
     uint64_t thread_id = 0;
     memcpy(&thread_id, &tid, std::min(sizeof(thread_id), sizeof(tid)));
+    //thread_id %= 1000000;
 
     struct timeval now_tv;
     gettimeofday(&now_tv, NULL);
@@ -609,6 +614,18 @@ std::string LogStream::TimeToString(struct timeval* filetime) {
     localtime_r(&seconds, &t);
     char buf[34];
     char* p = buf;
+#if 0
+    p += snprintf(p, 34,
+            "%06lu:%04d-%02d-%02d-%02d:%02d:%02d.%06d",
+            (unsigned long)thread_id,
+            t.tm_year + 1900,
+            t.tm_mon + 1,
+            t.tm_mday,
+            t.tm_hour,
+            t.tm_min,
+            t.tm_sec,
+            static_cast<int>(now_tv.tv_usec));
+#endif
     p += snprintf(p, 34,
             "%04d-%02d-%02d-%02d:%02d:%02d.%06d.%06lu",
             t.tm_year + 1900,
@@ -622,6 +639,14 @@ std::string LogStream::TimeToString(struct timeval* filetime) {
     std::string time_buf(buf, 33);
     *filetime = now_tv;
     return time_buf;
+}
+
+std::string LogStream::GetUUID() {
+    boost::uuids::uuid uuid = boost::uuids::random_generator()();
+    std::stringstream ss;
+    ss << uuid;
+    std::string s = ss.str();
+    return s;
 }
 
 // type 1: sec + micro sec
@@ -710,7 +735,8 @@ int LogStream::ParseMdtRequest(const std::string table_name,
             // if primary key not set, use time
             if (req->primary_key() == "") {
                 struct timeval dummy_time;
-                req->set_primary_key(TimeToString(&dummy_time));
+                //req->set_primary_key(TimeToStringWithTid(&dummy_time));
+                req->set_primary_key(GetUUID());
             }
             req->set_data(line);
             // user has time item in log
@@ -1039,6 +1065,7 @@ int LogStream::SearchIndex(const std::string& line, const std::string& table_nam
     pthread_spin_lock(&monitor_lock_);
     if (index_set_.find(table_name) != index_set_.end()) {
         const mdt::LogAgentService::RpcUpdateIndexRequest& index = index_set_[table_name];
+        std::string tmp_line;
 
         req->set_db_name(index.db_name());
         req->set_table_name(index.table_name());
@@ -1067,16 +1094,21 @@ int LogStream::SearchIndex(const std::string& line, const std::string& table_nam
                 mdt::SearchEngine::RpcStoreIndex* idx_tmp = req->add_index_list();
                 idx_tmp->set_index_table(it->first);
                 idx_tmp->set_key(it->second);
+
+                tmp_line += "{" + it->first + ":" + it->second + "}";
             }
         }
+        tmp_line += ":";
         if (req->primary_key() == "") {
             struct timeval dummy_time;
-            req->set_primary_key(TimeToString(&dummy_time));
+            //req->set_primary_key(TimeToStringWithTid(&dummy_time));
+            req->set_primary_key(GetUUID());
         }
         if (req->timestamp() == 0) {
             req->set_timestamp(mdt::timer::get_micros());
         }
-        req->set_data(line);
+        tmp_line += line;
+        req->set_data(tmp_line);
         res = 0;
     }
     pthread_spin_unlock(&monitor_lock_);

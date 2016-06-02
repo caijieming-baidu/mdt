@@ -8,6 +8,7 @@
 #include "utils/event.h"
 #include "utils/thread_pool.h"
 #include "utils/mutex.h"
+#include "utils/counter.h"
 #include "proto/query.pb.h"
 #include <google/protobuf/service.h>
 #include "proto/scheduler.pb.h"
@@ -31,6 +32,16 @@ public:
                ::mdt::SearchEngine::RpcStoreResponse* resp,
                ::google::protobuf::Closure* done);
     void ReportMessage();
+
+public:
+    // profile info
+    Counter kstore_busy_count;
+    Counter ktera_busy_count;
+    Counter kdb_open_error;
+    Counter ktable_open_error;
+    Counter kstore_num;
+
+    ::mdt::CounterMap kcounter_map;
 
 private:
     ::mdt::Table* GetTable(const std::string& db_name, const std::string& table_name);

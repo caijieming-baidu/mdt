@@ -133,7 +133,8 @@ private:
 
     void GetTableName(std::string file_name, std::string* table_name);
     uint64_t ParseTime(const std::string& time_str);
-    std::string TimeToString(struct timeval* filetime);
+    std::string TimeToStringWithTid(struct timeval* filetime);
+    std::string GetUUID();
     int ParseMdtRequest(const std::string table_name,
                         std::vector<std::string>& line_vec,
                         std::vector<mdt::SearchEngine::RpcStoreRequest* >* req_vec,

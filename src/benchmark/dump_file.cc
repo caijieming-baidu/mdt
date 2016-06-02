@@ -4,9 +4,13 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/foreach.hpp>
 #include <boost/regex.hpp>
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_generators.hpp>
+#include <boost/uuid/uuid_io.hpp>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <sys/time.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <errno.h>
@@ -311,11 +315,61 @@ void LineDelim() {
     }
 }
 
+// only use in agent, primary key may cause seq write in tera
+std::string TTS(struct timeval* filetime) {
+#ifdef OS_LINUX
+        pid_t tid = syscall(SYS_gettid);
+#else
+        pthread_t tid = pthread_self();
+#endif
+        uint64_t thread_id = 0;
+        memcpy(&thread_id, &tid, std::min(sizeof(thread_id), sizeof(tid)));
+        thread_id %= 1000000;
+
+        struct timeval now_tv;
+        gettimeofday(&now_tv, NULL);
+        const time_t seconds = now_tv.tv_sec;
+        struct tm t;
+        localtime_r(&seconds, &t);
+        char buf[34];
+        char* p = buf;
+        p += snprintf(p, 34,
+                "%06lu:%04d-%02d-%02d-%02d:%02d:%02d.%06d",
+                (unsigned long)thread_id,
+                t.tm_year + 1900,
+                t.tm_mon + 1,
+                t.tm_mday,
+                t.tm_hour,
+                t.tm_min,
+                t.tm_sec,
+                static_cast<int>(now_tv.tv_usec));
+        std::string time_buf(buf, 33);
+        *filetime = now_tv;
+    return time_buf;
+}
+
+std::string GetUUID() {
+    boost::uuids::uuid uuid = boost::uuids::random_generator()();
+    std::stringstream ss;
+    ss << uuid;
+    std::string s = ss.str();
+    return s;
+}
+void UUid_test() {
+    for (int i = 0; i < 1000; i++) {
+        std::string s = GetUUID();
+        std::cout << "uuid: " << s << std::endl;
+    }
+}
+
 // ./dump_file --flagfile=../conf/mdt.flag --op=create --index_list=passuid,mobile --dbname=TEST_db --tablename=TEST_table001
 // ./dump_file --flagfile=../conf/mdt.flag --op=dumpfile --primary_key=id --index_list=passuid,mobile --dbname=TEST_db --tablename=TEST_table001 --logfile=xxxx.dat
 // ./dump_file --flagfile=../conf/mdt.flag --op=get_index --logfile=xxxx.dat
 int main(int ac, char* av[])
 {
+    UUid_test();
+    struct timeval filetime;
+    std::cout << TTS(&filetime) << std::endl;
     LineDelim();
     ParseNuomiJson();
     ParseJson();
