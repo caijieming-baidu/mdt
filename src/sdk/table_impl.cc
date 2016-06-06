@@ -40,6 +40,7 @@ DECLARE_bool(delete_unknow_file);
 DECLARE_bool(enable_data_compress);
 DECLARE_bool(enable_async_index_write);
 DECLARE_int64(async_tera_writer_num);
+DECLARE_bool(ignore_tera_write_error);
 
 namespace mdt {
 static ThreadPool GLOBAL_read_row_data_threads(FLAGS_read_file_thread_num);
@@ -47,6 +48,8 @@ static ThreadPool GLOBAL_cleaner_thread(FLAGS_cleaner_thread_num);
 static ThreadPool GLOBAL_read_cell_data_threads(FLAGS_async_read_thread_num);
 static ThreadPool GLOBAL_async_tera_write_thread(FLAGS_async_tera_writer_num);
 static ThreadPool GLOBAL_info_collector_threads(1);
+
+static int64_t ksdk_last_warning_ts = 0;
 
 std::ostream& operator << (std::ostream& o, const FileLocation& location) {
     o << "file: " << location.fname_
@@ -64,6 +67,8 @@ Status TableImpl::OpenTable(const std::string& db_name, const TeraOptions& tera_
     fs_adapter.root_path_ = fs_opt.fs_path_ + "/" + table_name + "/";
     LOG(INFO) << "data file dir: " << fs_adapter.root_path_;
     fs_adapter.env_ = fs_opt.env_;
+
+    ksdk_last_warning_ts = timer::get_micros();
 
     //init tera adapter
     TeraAdapter tera_adapter;
@@ -868,6 +873,7 @@ void BatchIndexContext::Release() {
         for (uint32_t i = 0; i < req_vec.size(); i++) {
             StoreCallback callback = callback_vec[i];
             if (callback) {
+                VLOG(30) << "store callback, req " << (uint64_t)req_vec[i] << ", resp " << resp_vec[i];
                 callback(table, (StoreRequest*)req_vec[i], resp_vec[i], param_vec[i]);
             } else {
                 // callback is null, free req and resp
@@ -879,9 +885,49 @@ void BatchIndexContext::Release() {
     }
 }
 
+#define BatchWriteContext_ts_table (0)
 void BatchIndexCallback(tera::RowMutation* row) {
+    ::tera::ErrorCode error = row->GetError();
     BatchIndexContext* context = (BatchIndexContext*)row->GetContext();
-    context->Release();
+    if (error.GetType() != ::tera::ErrorCode::kOK) {
+        if (ksdk_last_warning_ts + 60000000 < timer::get_micros()) {
+            ksdk_last_warning_ts = timer::get_micros();
+            LOG(WARNING) << "write index error " << error.GetReason() << ", rowkey " << row->RowKey();
+        }
+        const ::tera::RowMutation::Mutation& mu = row->GetMutation(0);
+
+        if (FLAGS_ignore_tera_write_error) {
+            // ignore write error
+            context->Release();
+        } else {
+            // resend write req
+            if (context->row_table_map[(uint64_t)(row)] == (uint64_t)BatchWriteContext_ts_table) {
+                // timestamp table write error, scheduler to other timestamp table
+                tera::Table* ts_table = context->table->GetTimestampTable();
+                context->row_table_map.erase((uint64_t)(row));
+
+                tera::RowMutation* ts_row = ts_table->NewRowMutation(row->RowKey());
+                context->row_table_map[((uint64_t)(ts_row))] = (uint64_t)BatchWriteContext_ts_table;
+                ts_row->Put(mu.family, mu.qualifier, mu.timestamp, mu.value);
+                ts_row->SetContext(context);
+                ts_row->SetCallBack(BatchIndexCallback);
+                ts_table->ApplyMutation(ts_row);
+            } else {
+                tera::Table* index_table = (tera::Table*)(context->row_table_map[(uint64_t)(row)]);
+                context->row_table_map.erase((uint64_t)(row));
+
+                tera::RowMutation* index_row = index_table->NewRowMutation(row->RowKey());
+                context->row_table_map[((uint64_t)(index_row))] = (uint64_t)(index_table);
+                index_row->Put(mu.family, mu.qualifier, mu.timestamp, mu.value);
+                index_row->SetContext(context);
+                index_row->SetCallBack(BatchIndexCallback);
+                index_table->ApplyMutation(index_row);
+            }
+        }
+    } else {
+        // write succ
+        context->Release();
+    }
     delete row;
 }
 int TableImpl::WriteBatchIndexTable(const std::string& primary_key, uint64_t timestamp,
@@ -899,6 +945,7 @@ int TableImpl::WriteBatchIndexTable(const std::string& primary_key, uint64_t tim
     VLOG(12) << " write pri table, primary key: " << primary_key
         << ", typed_primary_key " << DebugString(type_primary_key);
     tera::RowMutation* primary_row = primary_table->NewRowMutation(type_primary_key);
+    context->row_table_map[((uint64_t)(primary_row))] = (uint64_t)(primary_table);
     primary_row->Put(kPrimaryTableColumnFamily, location.SerializeToString(), timestamp, index_block.ToString());
     primary_row->SetContext(context);
     primary_row->SetCallBack(BatchIndexCallback);
@@ -932,6 +979,7 @@ int TableImpl::WriteBatchIndexTable(const std::string& primary_key, uint64_t tim
         VLOG(12) << " write index table: " << key.ToString()
             << ", typed_index_key " << DebugString(value.ToString());
         tera::RowMutation* index_row = index_table->NewRowMutation(value.ToString());
+        context->row_table_map[((uint64_t)(index_row))] = (uint64_t)(index_table);
         index_row->Put(kIndexTableColumnFamily, time_primay_key, timestamp, null_value);
         index_row->SetContext(context);
         index_row->SetCallBack(BatchIndexCallback);
@@ -946,6 +994,7 @@ int TableImpl::WriteBatchIndexTable(const std::string& primary_key, uint64_t tim
     VLOG(12) << " write ts table: " << std::hex << ts_table << ", timestamp: "<< timestamp
              << ", ts string: " << DebugString(ts_key);
     tera::RowMutation* ts_row = ts_table->NewRowMutation(ts_key);
+    context->row_table_map[((uint64_t)(ts_row))] = (uint64_t)BatchWriteContext_ts_table;
     ts_row->Put(kIndexTableColumnFamily, type_primary_key, timestamp, null_value);
     ts_row->SetContext(context);
     ts_row->SetCallBack(BatchIndexCallback);

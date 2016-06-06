@@ -24,6 +24,7 @@ DEFINE_int64(max_timestamp_table_num, 10,  "num of timestamp index table");
 DEFINE_bool(enable_data_compress, true, "use snappy to compress data in filesystme");
 DEFINE_bool(enable_async_index_write, true, "write data and async write index");
 DEFINE_int64(async_tera_writer_num, 20, "num of async index writer");
+DEFINE_bool(ignore_tera_write_error, false, "ignore tera write error");
 
 // read ops param
 DEFINE_int64(read_file_thread_num, 50,  "num of read file threads");

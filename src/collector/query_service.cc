@@ -17,6 +17,7 @@ DECLARE_string(scheduler_addr);
 DECLARE_string(se_service_port);
 DECLARE_int64(collector_store_max_pending);
 DECLARE_int64(collector_tera_max_pending);
+DECLARE_int64(collector_ktera_pending_count);
 
 namespace mdt {
 
@@ -33,6 +34,8 @@ int64_t last_time_collect_info;
 ::mdt::Counter store_thread_pool_task_num;
 
 ::mdt::Counter tera_thread_pool_pending;
+
+::mdt::Counter ktera_pending_count;
 
 void* ReportThread(void* arg) {
     SearchEngineImpl* se = (SearchEngineImpl*)arg;
@@ -99,6 +102,8 @@ void SearchEngineImpl::ReportMessage() {
         kcounter_map.Add(mkey, ktable_open_error.Clear());
         mkey = "Collector." + local_addr + "." + "kstore_num";
         kcounter_map.Add(mkey, kstore_num.Clear());
+        mkey = "Collector." + local_addr + "." + "ktera_pending_count";
+        kcounter_map.Add(mkey, ktera_pending_count.Get());
 
         // set state info
         std::string key;
@@ -316,10 +321,11 @@ struct StoreCallback_param {
 void StoreCallback_dump(mdt::Table* table, mdt::StoreRequest* request,
                         mdt::StoreResponse* response,
                         void* callback_param) {
-    VLOG(30) << "store callback, pkey " << request->primary_key;
+    VLOG(30) << "store callback, pkey " << request->primary_key << ", req " << (uint64_t)request << ", resp " << (uint64_t)response;
     StoreCallback_param* param = (StoreCallback_param*)callback_param;
     MdtResponseToRpcStoreResponse(response, param->resp);
     param->done->Run();
+    ktera_pending_count.Dec();
     delete request;
     delete response;
     delete param;
@@ -354,6 +360,7 @@ void SearchEngineImpl::Store(::google::protobuf::RpcController* ctrl,
     }
 
     VLOG(30) << "store, pkey " << req->primary_key();
+
     ::mdt::Table* table = GetTable(req->db_name(), req->table_name());
     ::mdt::TableProfile profile;
     table->Profile(&profile);
@@ -368,6 +375,19 @@ void SearchEngineImpl::Store(::google::protobuf::RpcController* ctrl,
         }
         return;
     }
+
+    if (ktera_pending_count.Get() > FLAGS_collector_ktera_pending_count) {
+        ktera_busy_count.Inc();
+        resp->set_status(mdt::SearchEngine::ServerBusy);
+        done->Run();
+        if (klast_time_warning + 60000000 < timer::get_micros()) {
+            klast_time_warning = timer::get_micros();
+            LOG(WARNING) << "server busy, ktera_pending_count " << ktera_pending_count.Get();
+        }
+        return;
+    }
+    ktera_pending_count.Inc();
+    VLOG(30) << "store key " << req->primary_key();
 
     ::mdt::StoreRequest* request = new ::mdt::StoreRequest();
     ::mdt::StoreResponse* response = new ::mdt::StoreResponse();

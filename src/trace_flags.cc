@@ -71,4 +71,5 @@ DEFINE_int64(collector_rpc_nr_io_server, 2, "nr of worker thread");
 DEFINE_int64(collector_rpc_max_pending_size, 5, "MB, in server response buffer size");
 DEFINE_int64(collector_store_max_pending, 10000, "store thread max pending");
 DEFINE_int64(collector_tera_max_pending, 5000, "tera index thread max pending");
+DEFINE_int64(collector_ktera_pending_count, 100000, "tera max pending write before callback is call");
 

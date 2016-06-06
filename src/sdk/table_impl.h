@@ -173,6 +173,8 @@ public:
                          const FilesystemOptions& fs_opt, const TableDescription& table_desc,
                          Table** table_ptr);
 
+    tera::Table* GetTimestampTable();
+
 private:
     void BGInfoCollector();
     void FreeTeraTable();
@@ -264,7 +266,6 @@ private:
                                std::vector<std::string>* primary_key_list);
     tera::Table* GetPrimaryTable(const std::string& table_name);
     tera::Table* GetIndexTable(const std::string& index_name);
-    tera::Table* GetTimestampTable();
     void GetAllTimestampTables(std::vector<tera::Table*>* table_list);
     std::string TimeToString(struct timeval* filetime);
     void ParseIndexesFromString(const std::string& index_buffer,
@@ -370,13 +371,16 @@ private:
         return ref_.Dec();
     }
 
+public:
+    std::map<uint64_t, uint64_t> row_table_map;
+    TableImpl* table;
+
 private:
     Counter ref_;
     std::vector<const StoreRequest*> req_vec;
     std::vector<StoreResponse*> resp_vec;
     std::vector<StoreCallback> callback_vec;
     std::vector<void*> param_vec;
-    TableImpl* table;
 };
 
 struct PutContext {
