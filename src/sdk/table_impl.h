@@ -372,6 +372,7 @@ private:
     }
 
 public:
+    Mutex mu;
     std::map<uint64_t, uint64_t> row_table_map;
     TableImpl* table;
 

@@ -900,6 +900,7 @@ void BatchIndexCallback(tera::RowMutation* row) {
             // ignore write error
             context->Release();
         } else {
+            context->mu.Lock();
             // resend write req
             if (context->row_table_map[(uint64_t)(row)] == (uint64_t)BatchWriteContext_ts_table) {
                 // timestamp table write error, scheduler to other timestamp table
@@ -911,6 +912,8 @@ void BatchIndexCallback(tera::RowMutation* row) {
                 ts_row->Put(mu.family, mu.qualifier, mu.timestamp, mu.value);
                 ts_row->SetContext(context);
                 ts_row->SetCallBack(BatchIndexCallback);
+                context->mu.Unlock();
+
                 ts_table->ApplyMutation(ts_row);
             } else {
                 tera::Table* index_table = (tera::Table*)(context->row_table_map[(uint64_t)(row)]);
@@ -921,6 +924,8 @@ void BatchIndexCallback(tera::RowMutation* row) {
                 index_row->Put(mu.family, mu.qualifier, mu.timestamp, mu.value);
                 index_row->SetContext(context);
                 index_row->SetCallBack(BatchIndexCallback);
+                context->mu.Unlock();
+
                 index_table->ApplyMutation(index_row);
             }
         }
