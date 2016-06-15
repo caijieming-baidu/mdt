@@ -165,6 +165,13 @@ LogStream::LogStream(std::string module_name, LogOptions log_options,
 
     last_update_time_ = mdt::timer::get_micros();
     pthread_create(&tid_, NULL, LogStreamWrapper, this);
+
+    // recovery write event
+    std::vector<std::pair<std::string, uint64_t> > event_vec;
+    RecoverWriteEvent(&event_vec);
+    for (uint32_t vec_i = 0; vec_i < event_vec.size(); vec_i++) {
+        AddWriteEvent(event_vec[vec_i].first, event_vec[vec_i].second);
+    }
 }
 
 LogStream::~LogStream() {
@@ -187,6 +194,111 @@ void LogStream::GetTableName(std::string file_name, std::string* table_name) {
     }
     if (max_len == 0) {
         *table_name = "trash";
+    }
+    return;
+}
+
+void LogStream::EncodeUint64BigEndian(uint64_t value, std::string* str) {
+    char offset_buf[8];
+    EncodeBigEndian(offset_buf, value);
+    std::string offset_str(offset_buf, 8);
+    *str = offset_str;
+}
+// key=MagicYoYo1989'\0'dbname'\0'ino, value=tablename
+void LogStream::DumpWriteEvent(const std::string& filename, uint64_t ino) {
+    std::string key, value;
+    key = "MagicYoYo1989";
+    key.push_back('\0');
+    key+= module_name_;
+    key.push_back('\0');
+
+    std::string ino_str;
+    EncodeUint64BigEndian(ino, &ino_str);
+    key += ino_str;
+
+    value = filename;
+
+    std::string value1;
+    leveldb::Status s;
+    s = log_options_.db->Get(leveldb::ReadOptions(), key, &value1);
+    if (!s.ok()) {
+        s = log_options_.db->Put(leveldb::WriteOptions(), key, value);
+    } else if (value != value1) {
+        s = log_options_.db->Put(leveldb::WriteOptions(), key, value);
+    }
+    if (!s.ok()) {
+        // reopen leveldb, flush error
+        delete log_options_.db;
+        log_options_.db = NULL;
+        leveldb::Options options;
+        s = leveldb::DB::Open(options, log_options_.db_dir.c_str(), &log_options_.db);
+        if (!s.ok()) {
+            LOG(WARNING) << "DumpWriteEvent, re-open error";
+        }
+    }
+    return;
+}
+// vec[(fname, ino)]
+void LogStream::RecoverWriteEvent(std::vector<std::pair<std::string, uint64_t> >* event_vec) {
+    std::string key, value;
+    key = "MagicYoYo1989";
+    key.push_back('\0');
+    key+= module_name_;
+    key.push_back('\0');
+
+    leveldb::Iterator* db_it = log_options_.db->NewIterator(leveldb::ReadOptions());
+
+    std::string startkey, endkey;
+    startkey = key;
+    std::string start_ino_str;
+    EncodeUint64BigEndian((uint64_t)0UL, &start_ino_str);
+    startkey += start_ino_str;
+
+    endkey = key;
+    std::string end_ino_str;
+    EncodeUint64BigEndian(0xffffffffffffffff, &end_ino_str);
+    endkey += end_ino_str;
+
+    for (db_it->Seek(startkey);
+         db_it->Valid() && db_it->key().ToString() < endkey;
+         db_it->Next()) {
+        leveldb::Slice lkey = db_it->key();
+        leveldb::Slice lvalue = db_it->value();
+        uint64_t tmp_ino;
+        const std::string& fname = lvalue.ToString();
+
+        leveldb::Slice ino_str = leveldb::Slice(lkey.data() + key.size(), 8);
+        tmp_ino = DecodeBigEndain(ino_str.data());
+        if (tmp_ino != 0 || tmp_ino != 0xffffffffffffffff) {
+            event_vec->push_back(std::pair<std::string, uint64_t>(fname, tmp_ino));
+        }
+    }
+    delete db_it;
+}
+void LogStream::EraseWriteEvent(const std::string& filename, uint64_t ino) {
+    std::string key, value;
+    key = "MagicYoYo1989";
+    key.push_back('\0');
+    key+= module_name_;
+    key.push_back('\0');
+
+    std::string ino_str;
+    EncodeUint64BigEndian(ino, &ino_str);
+    key += ino_str;
+
+    value = filename;
+
+    leveldb::Status s;
+    s = log_options_.db->Delete(leveldb::WriteOptions(), key);
+    if (!s.ok()) {
+        // reopen leveldb, flush error
+        delete log_options_.db;
+        log_options_.db = NULL;
+        leveldb::Options options;
+        s = leveldb::DB::Open(options, log_options_.db_dir.c_str(), &log_options_.db);
+        if (!s.ok()) {
+            LOG(WARNING) << "EraseWriteEvent, re-open error";
+        }
     }
     return;
 }
@@ -316,6 +428,9 @@ void LogStream::Run() {
                 }
                 file_stream->OpenFile();
             } else {
+                // dump write event into leveldb
+                DumpWriteEvent(filename, ino);
+
                 // first log file add, check max fd wether is overflow
                 pthread_spin_lock(server_addr_lock_);
                 if (info_->nr_file_streams > FLAGS_agent_max_fd_num) {
@@ -386,6 +501,7 @@ void LogStream::Run() {
                     // TODO: need delete file_stream ??
                     file_streams_.erase(file_it);
                     delete file_stream;
+                    EraseWriteEvent(filename, ino);
                 } else {
                     // add into delete queue without wakeup thread
                     ThreadPool::Task task =
@@ -1411,6 +1527,7 @@ void FileStream::EncodeUint64BigEndian(uint64_t value, std::string* str) {
     *str = offset_str;
 }
 
+// key=dbname'\0'ino offset, value=size filename
 void FileStream::MakeKeyValue(const std::string& module_name,
                                const std::string& filename,
                                uint64_t ino,
@@ -1420,9 +1537,6 @@ void FileStream::MakeKeyValue(const std::string& module_name,
                                std::string* value) {
     *key = module_name;
     key->push_back('\0');
-    *key += filename;
-    key->push_back('\0');
-
     std::string ino_str;
     EncodeUint64BigEndian(ino, &ino_str);
     *key += ino_str;
@@ -1443,13 +1557,10 @@ void FileStream::ParseKeyValue(const leveldb::Slice& key,
                                uint64_t* offset, uint64_t* size) {
     int mlen = strlen(key.data());
     //leveldb::Slice module_name = leveldb::Slice(key.data(), mlen);
-    int flen = strlen(key.data() + mlen + 1);
-    //leveldb::Slice filename = leveldb::Slice(key.data() + mlen + 1, flen);
-
-    leveldb::Slice ino_str = leveldb::Slice(key.data() + mlen + 1 + flen + 1, 8);
+    leveldb::Slice ino_str = leveldb::Slice(key.data() + mlen + 1, 8);
     *ino = DecodeBigEndain(ino_str.data());
 
-    leveldb::Slice offset_str = leveldb::Slice(key.data() + mlen + 1 + flen + 1 + 8, 8);
+    leveldb::Slice offset_str = leveldb::Slice(key.data() + mlen + 1 + 8, 8);
     *offset = DecodeBigEndain(offset_str.data());
 
     *size = DecodeBigEndain(value.data());

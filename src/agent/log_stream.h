@@ -125,6 +125,11 @@ public:
     int UpdateIndex(const mdt::LogAgentService::RpcUpdateIndexRequest* request);
 
 private:
+    void EncodeUint64BigEndian(uint64_t value, std::string* str);
+    void DumpWriteEvent(const std::string& filename, uint64_t ino);
+    void EraseWriteEvent(const std::string& filename, uint64_t ino);
+    void RecoverWriteEvent(std::vector<std::pair<std::string, uint64_t> >* event_vec);
+
     int CollectorMeta(const mdt::LogAgentService::LogMeta& meta,
                      std::map<std::string, std::string>* kv);
     bool CheckTimeStampValid(const std::string& time_str);
