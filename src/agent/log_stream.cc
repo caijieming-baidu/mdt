@@ -19,6 +19,7 @@
 #include <boost/algorithm/string/classification.hpp>
 #include "utils/coding.h"
 #include <sys/time.h>
+#include <dirent.h>
 
 #include "leveldb/slice.h"
 #include "leveldb/db.h"
@@ -321,6 +322,11 @@ void LogStream::Run() {
                     // fd overflow, ignore write event
                     info_->history_fd_overflow_count++;
                     pthread_spin_unlock(server_addr_lock_);
+
+                    // delay retry
+                    ThreadPool::Task task =
+                        boost::bind(&LogStream::AddWriteEvent, this, filename, ino);
+                    fail_delay_thread_.DelayTask(FLAGS_delay_retry_time, task);
                     continue;
                 }
                 pthread_spin_unlock(server_addr_lock_);
@@ -329,8 +335,8 @@ void LogStream::Run() {
                 int success;
                 file_stream = new FileStream(module_name_, log_options_, filename, ino, &success);
                 if (success < 0) {
-                    // TODO: do something
-                    LOG(WARNING) << "new file stream " << filename << ", faile";
+                    // TODO: log has been delete before it can be collector, :(-
+                    LOG(WARNING) << "new file stream " << file_stream->GetFileName() << ", faile, ino " << ino;
                 }
                 file_streams_[ino] = file_stream;
                 // may take a little long
@@ -338,7 +344,8 @@ void LogStream::Run() {
             }
             DBKey* key;
             std::vector<std::string> line_vec;
-            if (file_stream->Read(&line_vec, &key) > 0) {
+            int file_read_res = 0;
+            if ((file_read_res = file_stream->Read(&line_vec, &key)) > 0) {
                 std::vector<mdt::SearchEngine::RpcStoreRequest*> req_vec;
                 std::string table_name;
                 std::vector<std::string> monitor_vec;
@@ -349,6 +356,17 @@ void LogStream::Run() {
 
                 // read next offset
                 AddWriteEvent(filename, ino);
+            } else if (file_read_res == 0) {
+                // file reach end
+            } else if (file_read_res == -1) {
+                // file error, give it
+                LOG(WARNING) << "Missfile=" << file_stream->GetFileName() << " MissInode=" << ino;
+                DeleteWatchEvent(file_stream->GetFileName(), ino, false);
+            } else if (file_read_res == -2) {
+                // delay retry
+                ThreadPool::Task task =
+                    boost::bind(&LogStream::AddWriteEvent, this, filename, ino);
+                fail_delay_thread_.DelayTask(FLAGS_delay_retry_time, task);
             } else {
                 VLOG(30) << "has write event, but read nothing";
             }
@@ -1273,19 +1291,106 @@ FileStream::FileStream(std::string module_name, LogOptions log_options,
     filename_(filename),
     ino_(ino),
     log_options_(log_options) {
-    *success = -1;
-    fd_ = open(filename.c_str(), O_RDONLY);
-    if (fd_ < 0) {
-        return;
-    }
+
     current_offset_ = 0;
     pthread_spin_init(&lock_, PTHREAD_PROCESS_PRIVATE);
+
+    *success = -1;
+    while (1) {
+        struct stat stat_buf1;
+        uint64_t ino1 = 0;
+        if (lstat(filename_.c_str(), &stat_buf1) >= 0) {
+            ino1 = (uint64_t)stat_buf1.st_ino;
+        }
+
+        fd_ = -1;
+        fd_ = open(filename_.c_str(), O_RDONLY);
+
+        struct stat stat_buf2;
+        uint64_t ino2 = 0;
+        if (lstat(filename_.c_str(), &stat_buf2) >= 0) {
+            ino2 = (uint64_t)stat_buf2.st_ino;
+        }
+
+        if ((ino1 == 0) || (ino1 != ino2)) {
+            // rename or delete occur during open
+            if (fd_ >= 0) {
+                close(fd_);
+                fd_ = -1;
+            }
+            std::string newname;
+            if (!InodeToFileName(ino_, filename_, &newname)) {
+                // file no exit
+                LOG(WARNING) << "file " << filename << "(" << ino << ") has been delete during new filestream";
+                return;
+            }
+            LOG(WARNING) << "rename happen, " << ino_ << ", ino1 " << ino1 << ", ino2 " << ino2
+                << ", old file " << filename_ << ", new file " << newname;
+            filename_ = newname;
+            continue;
+        } else {
+            // rename safety, check ino
+            std::string newname;
+            if (ino1 != ino_) { // ino and filename not match
+                if (fd_ >= 0) {
+                    close(fd_);
+                    fd_ = -1;
+                }
+                if (!InodeToFileName(ino_, filename_, &newname)) {
+                    // file no exit
+                    LOG(WARNING) << "file " << filename << "(" << ino << ") has been delete during new filestream";
+                    return;
+                }
+                LOG(WARNING) << "rename safe, but ino not match, " << ino_ << ", ino1 " << ino1 << ", ino2 " << ino2
+                    << ", old file " << filename_ << ", new file " << newname;
+                filename_ = newname;
+                continue;
+            }
+
+            // no rename during open, and filename match with ino, open success
+            break;
+        }
+    }
+
+    //fd_ = open(filename.c_str(), O_RDONLY);
+    //if (fd_ < 0) {
+    //    return;
+    //}
 
     // recovery restart point
     *success = RecoveryCheckPoint();
     if (*success < 0) {
         close(fd_);
     }
+}
+
+bool FileStream::InodeToFileName(uint64_t ino, const std::string& filename, std::string* newname) {
+    // get parent dir
+    newname->clear();
+    std::string dir;
+    std::string delim("/");
+    std::size_t pos = filename.rfind(delim);
+    if (pos != std::string::npos) {
+        dir = std::string(filename, 0, pos + 1);
+
+        // list dir
+        DIR* dirptr = NULL;
+        struct dirent* entry = NULL;
+        if ((dirptr = opendir(dir.c_str())) != NULL) {
+            while ((entry = readdir(dirptr)) != NULL) {
+                // find filename match ino
+                uint64_t tmp_ino = (uint64_t)entry->d_ino;
+                if (tmp_ino == ino) {
+                    std::string fname(entry->d_name);
+                    *newname = dir + fname;
+                    closedir(dirptr);
+                    return true;
+                }
+            }
+            closedir(dirptr);
+        }
+    }
+    return false;
 }
 
 FileStream::~FileStream() {
@@ -1308,6 +1413,7 @@ void FileStream::EncodeUint64BigEndian(uint64_t value, std::string* str) {
 
 void FileStream::MakeKeyValue(const std::string& module_name,
                                const std::string& filename,
+                               uint64_t ino,
                                uint64_t offset,
                                std::string* key,
                                uint64_t size,
@@ -1316,6 +1422,10 @@ void FileStream::MakeKeyValue(const std::string& module_name,
     key->push_back('\0');
     *key += filename;
     key->push_back('\0');
+
+    std::string ino_str;
+    EncodeUint64BigEndian(ino, &ino_str);
+    *key += ino_str;
 
     std::string offset_str;
     EncodeUint64BigEndian(offset, &offset_str);
@@ -1329,13 +1439,19 @@ void FileStream::MakeKeyValue(const std::string& module_name,
 
 void FileStream::ParseKeyValue(const leveldb::Slice& key,
                                const leveldb::Slice& value,
+                               uint64_t* ino,
                                uint64_t* offset, uint64_t* size) {
     int mlen = strlen(key.data());
     //leveldb::Slice module_name = leveldb::Slice(key.data(), mlen);
     int flen = strlen(key.data() + mlen + 1);
     //leveldb::Slice filename = leveldb::Slice(key.data() + mlen + 1, flen);
-    leveldb::Slice offset_str = leveldb::Slice(key.data() + mlen + 1 + flen + 1, 8);
+
+    leveldb::Slice ino_str = leveldb::Slice(key.data() + mlen + 1 + flen + 1, 8);
+    *ino = DecodeBigEndain(ino_str.data());
+
+    leveldb::Slice offset_str = leveldb::Slice(key.data() + mlen + 1 + flen + 1 + 8, 8);
     *offset = DecodeBigEndain(offset_str.data());
+
     *size = DecodeBigEndain(value.data());
 }
 
@@ -1344,33 +1460,34 @@ int FileStream::RecoveryCheckPoint() {
     int64_t begin_ts = timer::get_micros();
     int64_t end_ts;
 
+#if 0
     struct stat stat_buf;
     if (lstat(filename_.c_str(), &stat_buf) == -1) {
         return -1;
     }
-
-    leveldb::Iterator* db_it = log_options_.db->NewIterator(leveldb::ReadOptions());
     uint64_t file_size = stat_buf.st_size;
     bool file_rename = false;
+#endif
 
+    leveldb::Iterator* db_it = log_options_.db->NewIterator(leveldb::ReadOptions());
     std::string startkey, endkey;
-    MakeKeyValue(module_name_, filename_, 0, &startkey, 0, NULL);
-    MakeKeyValue(module_name_, filename_, 0xffffffffffffffff, &endkey, 0, NULL);
+    MakeKeyValue(module_name_, filename_, ino_, 0, &startkey, 0, NULL);
+    MakeKeyValue(module_name_, filename_, ino_, 0xffffffffffffffff, &endkey, 0, NULL);
     for (db_it->Seek(startkey);
          db_it->Valid() && db_it->key().ToString() < endkey;
          db_it->Next()) {
         leveldb::Slice key = db_it->key();
         leveldb::Slice value = db_it->value();
-        uint64_t offset, size;
-        ParseKeyValue(key, value, &offset, &size);
-        VLOG(30) << "recovery cp, offset " << offset << ", size " << size;
-
+        uint64_t offset, size, ino;
+        ParseKeyValue(key, value, &ino, &offset, &size);
+        VLOG(30) << "recovery cp, offset " << offset << ", size " << size << ", ino " << ino;
+#if 0
         if (file_rename || (file_size < (offset + size))) {
             // file has been rename
             file_rename = true;
             break;
         }
-
+#endif
         // insert [offset, size] into mem cp list
         pthread_spin_lock(&lock_);
         std::map<uint64_t, uint64_t>::iterator cp_it =  mem_checkpoint_list_.find(offset);
@@ -1393,6 +1510,7 @@ int FileStream::RecoveryCheckPoint() {
     }
     delete db_it;
 
+#if 0
     // clear old file stat
     if (file_rename) {
         VLOG(30) << "log file rename after agent down, file " << filename_;
@@ -1404,16 +1522,16 @@ int FileStream::RecoveryCheckPoint() {
 
         // delete cp in leveldb
         db_it = log_options_.db->NewIterator(leveldb::ReadOptions());
-        MakeKeyValue(module_name_, filename_, 0, &startkey, 0, NULL);
-        MakeKeyValue(module_name_, filename_, 0xffffffffffffffff, &endkey, 0, NULL);
+        MakeKeyValue(module_name_, filename_, ino_, 0, &startkey, 0, NULL);
+        MakeKeyValue(module_name_, filename_, ino_, 0xffffffffffffffff, &endkey, 0, NULL);
         leveldb::Status s;
         for (db_it->Seek(startkey);
                 db_it->Valid() && db_it->key().ToString() < endkey;
                 db_it->Next()) {
             leveldb::Slice key = db_it->key();
             leveldb::Slice value = db_it->value();
-            uint64_t offset, size;
-            ParseKeyValue(key, value, &offset, &size);
+            uint64_t offset, size, ino;
+            ParseKeyValue(key, value, &ino, &offset, &size);
             s = log_options_.db->Delete(leveldb::WriteOptions(), key);
             if (!s.ok()) {
                 kleveldb_delete_fail.Inc();
@@ -1435,6 +1553,7 @@ int FileStream::RecoveryCheckPoint() {
             }
         }
     }
+#endif
 
     end_ts = timer::get_micros();
     VLOG(50) << "recovery " << filename_ << ", cost time " << end_ts - begin_ts;
@@ -1454,16 +1573,16 @@ void FileStream::ReSetFileStreamCheckPoint() {
 
     // delete cp in leveldb
     db_it = log_options_.db->NewIterator(leveldb::ReadOptions());
-    MakeKeyValue(module_name_, filename_, 0, &startkey, 0, NULL);
-    MakeKeyValue(module_name_, filename_, 0xffffffffffffffff, &endkey, 0, NULL);
+    MakeKeyValue(module_name_, filename_, ino_, 0, &startkey, 0, NULL);
+    MakeKeyValue(module_name_, filename_, ino_, 0xffffffffffffffff, &endkey, 0, NULL);
     leveldb::Status s;
     for (db_it->Seek(startkey);
             db_it->Valid() && db_it->key().ToString() < endkey;
             db_it->Next()) {
         leveldb::Slice key = db_it->key();
         leveldb::Slice value = db_it->value();
-        uint64_t offset, size;
-        ParseKeyValue(key, value, &offset, &size);
+        uint64_t offset, size, ino;
+        ParseKeyValue(key, value, &ino, &offset, &size);
         s = log_options_.db->Delete(leveldb::WriteOptions(), key);
         if (!s.ok()) {
             kleveldb_delete_fail.Inc();
@@ -1519,15 +1638,18 @@ ssize_t FileStream::ParseLine(char* buf, ssize_t size, std::vector<std::string>*
 }
 
 // each read granularity is 64KB
+// ret: 0, no data
+//      -1, file error
+//      -2, flow control
 int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
     int ret = 0;
-    if (fd_ > 0) {
+    if (fd_ >= 0) {
         // check mem cp pending request
         pthread_spin_lock(&lock_);
         if (mem_checkpoint_list_.size() > (uint32_t)FLAGS_file_stream_max_pending_request) {
             VLOG(30) << "pending overflow, max queue size " << FLAGS_file_stream_max_pending_request << ", cp list size " << mem_checkpoint_list_.size();
             pthread_spin_unlock(&lock_);
-            return -1;
+            return -2; // need delay retry
         }
         pthread_spin_unlock(&lock_);
 
@@ -1546,12 +1668,13 @@ int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
            VLOG(30) << "file " << filename_ << ", read size 0";
         } else {
             res = ParseLine(buf, res, line_vec);
+            if (res <= 0) {
+                res = -2; // delay retry
+            }
         }
         delete buf;
 
-        if (res <= 0) {
-            ret = -1;
-        } else {
+        if (res > 0) {
             kfile_read_success.Inc();
 
             *key = new DBKey;
@@ -1567,6 +1690,23 @@ int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
             }
         }
     }
+
+    if (fd_ < 0) {
+        // file error, try to re-open it
+        struct stat stat_buf;
+        if (lstat(filename_.c_str(), &stat_buf) >= 0) {
+            uint64_t ino = (uint64_t)stat_buf.st_ino;
+            if (ino == ino_) {
+                OpenFile();
+                ret = -2; // delay it
+            } else {
+                // readdir and find it, ino to file
+                ret = -1;
+            }
+        } else {
+            ret = -1; // give up it
+        }
+    }
     return ret;
 }
 
@@ -1579,7 +1719,7 @@ int FileStream::LogCheckPoint(uint64_t offset, uint64_t size) {
     pthread_spin_unlock(&lock_);
 
     std::string key, value;
-    MakeKeyValue(module_name_, filename_, offset, &key, size, &value);
+    MakeKeyValue(module_name_, filename_, ino_, offset, &key, size, &value);
     leveldb::Status s = log_options_.db->Put(leveldb::WriteOptions(), key, value);
     if (!s.ok()) {
         // reopen leveldb, flush error
@@ -1625,7 +1765,7 @@ int FileStream::DeleteCheckoutPoint(DBKey* key) {
 
     // delete log checkpoint
     std::string key_str;
-    MakeKeyValue(module_name_, filename_, key->offset, &key_str, 0, NULL);
+    MakeKeyValue(module_name_, filename_, key->ino, key->offset, &key_str, 0, NULL);
     leveldb::Status s = log_options_.db->Delete(leveldb::WriteOptions(), key_str);
     if (!s.ok()) {
         delete log_options_.db;

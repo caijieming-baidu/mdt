@@ -17,6 +17,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <dirent.h>
 #include <unistd.h>
 #include <vector>
 #include <set>
@@ -362,6 +363,60 @@ void UUid_test() {
     }
 }
 
+bool InodeToFileNameTest(uint64_t ino, const std::string& filename, std::string* newname) {
+    // get parent dir
+    newname->clear();
+    std::string dir;
+    std::string delim("/");
+    std::size_t pos = filename.rfind(delim);
+    if (pos != std::string::npos) {
+        dir = std::string(filename, 0, pos + 1);
+
+        // list dir
+        DIR* dirptr = NULL;
+        struct dirent* entry = NULL;
+        if ((dirptr = opendir(dir.c_str())) != NULL) {
+            while ((entry = readdir(dirptr)) != NULL) {
+                // find filename match ino
+                uint64_t tmp_ino = (uint64_t)entry->d_ino;
+                if (tmp_ino == ino) {
+                    std::string fname(entry->d_name);
+                    *newname = dir + fname;
+                    closedir(dirptr);
+                    return true;
+                }
+            }
+            closedir(dirptr);
+        }
+    }
+    return false;
+}
+
+void TestInode() {
+    std::string test_dir = "./tmp_test/";
+    mkdir(test_dir.c_str(), 0777);
+    std::string file1 = test_dir + "file1";
+    std::string file2 = test_dir + "file2";
+    std::string file3 = test_dir + "file3";
+    int fd1 = open(file1.c_str(), O_WRONLY|O_NONBLOCK|O_CREAT|O_NOCTTY, 0666);
+    int fd2 = open(file2.c_str(), O_WRONLY|O_NONBLOCK|O_CREAT|O_NOCTTY, 0666);
+    int fd3 = open(file3.c_str(), O_WRONLY|O_NONBLOCK|O_CREAT|O_NOCTTY, 0666);
+    close(fd1);
+    close(fd2);
+    close(fd3);
+
+    struct stat stat_buf;
+    lstat(file1.c_str(), &stat_buf);
+    uint64_t ino1 = (uint64_t)stat_buf.st_ino;
+
+    std::string rfile1 = test_dir + "renamefile1";
+    rename(file1.c_str(), rfile1.c_str());
+
+    std::string newname;
+    assert(InodeToFileNameTest(ino1, file1, &newname));
+    std::cout << "INODE TEST: pass " << newname << std::endl;
+}
+
 // ./dump_file --flagfile=../conf/mdt.flag --op=create --index_list=passuid,mobile --dbname=TEST_db --tablename=TEST_table001
 // ./dump_file --flagfile=../conf/mdt.flag --op=dumpfile --primary_key=id --index_list=passuid,mobile --dbname=TEST_db --tablename=TEST_table001 --logfile=xxxx.dat
 // ./dump_file --flagfile=../conf/mdt.flag --op=get_index --logfile=xxxx.dat
@@ -374,6 +429,7 @@ int main(int ac, char* av[])
     ParseNuomiJson();
     ParseJson();
     Regex();
+    TestInode();
 
     // send mail
     std::string to = "caijieming@baidu.com";

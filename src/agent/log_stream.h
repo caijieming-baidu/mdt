@@ -41,6 +41,7 @@ public:
                         std::string filename,
                         uint64_t ino,
                         int* success);
+    bool InodeToFileName(uint64_t ino, const std::string& filename, std::string* newname);
     ~FileStream();
     std::string GetFileName() {
         return filename_;
@@ -67,12 +68,14 @@ private:
     void EncodeUint64BigEndian(uint64_t value, std::string* str);
     void MakeKeyValue(const std::string& module_name,
                       const std::string& filename,
+                      uint64_t ino,
                       uint64_t offset,
                       std::string* key,
                       uint64_t size,
                       std::string* value);
     void ParseKeyValue(const leveldb::Slice& key,
                        const leveldb::Slice& value,
+                       uint64_t* ino,
                        uint64_t* offset, uint64_t* size);
 
 public:
