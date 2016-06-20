@@ -1413,6 +1413,7 @@ int PushTraceLog(std::vector<std::string>& cmd_vec) {
     std::string nexus_root_path = cmd_vec[7];
     std::string master_path = cmd_vec[8];
     std::string nexus_servers = cmd_vec[9];
+    std::string job_id = cmd_vec[10];
 
     std::string scheduler_addr = FLAGS_scheduler_addr;
     mdt::RpcClient* rpc_client = new mdt::RpcClient;
@@ -1422,6 +1423,7 @@ int PushTraceLog(std::vector<std::string>& cmd_vec) {
     mdt::LogSchedulerService::RpcTraceGalaxyAppRequest* req = new mdt::LogSchedulerService::RpcTraceGalaxyAppRequest();
     mdt::LogSchedulerService::RpcTraceGalaxyAppResponse* resp = new mdt::LogSchedulerService::RpcTraceGalaxyAppResponse();
     req->set_job_name(job_name);
+    req->set_job_id(job_id);
     req->set_work_dir(work_dir);
     req->set_user_log_dir(user_log_dir);
     req->set_db_name(db_name);
@@ -1786,7 +1788,7 @@ int main(int ac, char* av[]) {
             add_history(line);
             free(line);
             continue;
-        } else if ((cmd_vec[0].compare("PushTraceLog") == 0) && (cmd_vec.size() == 10)) {
+        } else if ((cmd_vec[0].compare("PushTraceLog") == 0) && (cmd_vec.size() == 11)) {
             PushTraceLog(cmd_vec);
             add_history(line);
             free(line);

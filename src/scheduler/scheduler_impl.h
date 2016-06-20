@@ -81,6 +81,7 @@ enum TraceState {
 
 struct TraceInfo {
     std::string job_name;
+    std::string job_id;
     ::baidu::galaxy::Galaxy* galaxy;
     uint64_t flag;
     Counter ref;
@@ -185,11 +186,13 @@ private:
                            ::google::protobuf::Closure* done);
     void SelectAndUpdateCollector(AgentInfo info, std::string* select_server_addr);
 
+    void RepeatedAddAgentWatchPath(std::string agent_addr);
     void DoRpcAddAgentWatchPath(::google::protobuf::RpcController* controller,
                  const mdt::LogSchedulerService::RpcAddAgentWatchPathRequest* request,
                  mdt::LogSchedulerService::RpcAddAgentWatchPathResponse* response,
                  ::google::protobuf::Closure* done);
 
+    void RepeatedAddAgentWatchModuleStream(std::string agent_addr);
     void DoRpcAddWatchModuleStream(::google::protobuf::RpcController* controller,
                                    const mdt::LogSchedulerService::RpcAddWatchModuleStreamRequest* request,
                                    mdt::LogSchedulerService::RpcAddWatchModuleStreamResponse* response,
@@ -210,6 +213,7 @@ private:
     void PackMail(const std::string& to, const mdt::LogSchedulerService::RpcMonitorStreamRequest* request);
     void DelaySendMail(std::string to);
     void InternalSendMail(const std::string& to, std::vector<mdt::LogSchedulerService::RpcMonitorStreamRequest>& local_queue);
+    void RepeatedMonitor(std::string name);
     void DoRpcMonitorStream(::google::protobuf::RpcController* controller,
                           const mdt::LogSchedulerService::RpcMonitorStreamRequest* request,
                           mdt::LogSchedulerService::RpcMonitorStreamResponse* response,
@@ -235,6 +239,8 @@ private:
                                   bool failed, int error,
                                   mdt::LogAgentService::LogAgentService_Stub* service);
     void GetIndexConfigureName(const std::string& db_name, const std::string& table_name, std::string* dest_name);
+    void ParseIndexConfigureName(const std::string& name, std::string* db_name, std::string* table_name);
+    void RepeatedUpdateIndex(std::string name);
     void DoRpcUpdateIndex(::google::protobuf::RpcController* controller,
                           const mdt::LogSchedulerService::RpcUpdateIndexRequest* request,
                           mdt::LogSchedulerService::RpcUpdateIndexResponse* response,
@@ -284,10 +290,15 @@ private:
     pthread_t agent_tid_;
     volatile bool agent_thread_stop_;
 
+
+
     // use for galaxy configure app trace path
     ThreadPool galaxy_trace_pool_;
     pthread_spinlock_t galaxy_trace_lock_;
     std::map<std::string, boost::shared_ptr<TraceInfo> > galaxy_trace_rule_;
+    // <ip, path_vec, db#table_vec> map
+    std::map<std::string, std::map<std::string, int> > path_map_;
+    std::map<std::string, std::map<std::string, int> > db_map_;
 
     // use for monitor send mail
     pthread_spinlock_t monitor_lock_;

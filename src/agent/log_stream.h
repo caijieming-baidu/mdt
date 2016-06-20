@@ -42,6 +42,7 @@ public:
                         uint64_t ino,
                         int* success);
     bool InodeToFileName(uint64_t ino, const std::string& filename, std::string* newname);
+    bool FindLostInode(uint64_t ino, const std::string& dir, std::string* newname);
     ~FileStream();
     std::string GetFileName() {
         return filename_;
@@ -53,7 +54,8 @@ public:
     void ReSetFileStreamCheckPoint();
     int RecoveryCheckPoint();
     void GetCheckpoint(DBKey* key, uint64_t* offset, uint64_t* size);
-    ssize_t ParseLine(char* buf, ssize_t size, std::vector<std::string>* line_vec);
+    //ssize_t ParseLine(char* buf, ssize_t size, std::vector<std::string>* line_vec);
+    ssize_t ParseLine(char* buf, ssize_t size, std::vector<std::string>* line_vec, bool read_half_line);
     int Read(std::vector<std::string>* line_vec, DBKey** key);
     int LogCheckPoint(uint64_t offset, uint64_t size);
     int DeleteCheckoutPoint(DBKey* key);
@@ -77,6 +79,13 @@ private:
                        const leveldb::Slice& value,
                        uint64_t* ino,
                        uint64_t* offset, uint64_t* size);
+
+    void MakeCurrentOffsetKey(const std::string& module_name,
+                              const std::string& filename,
+                              uint64_t ino,
+                              uint64_t offset,
+                              std::string* key,
+                              std::string* value);
 
 public:
     // profile info
@@ -220,6 +229,7 @@ private:
 
     //std::map<std::string, FileStream*> file_streams_;
     std::map<uint64_t, FileStream*> file_streams_; // ino, filestream map
+    uint32_t total_stream_offset_;
     // all event queue
     pthread_spinlock_t lock_;
     //std::set<std::string> delete_event_;

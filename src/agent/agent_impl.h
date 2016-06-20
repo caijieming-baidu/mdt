@@ -86,6 +86,7 @@ private:
     void ParseModuleName(const std::string& filename, std::string* module_name);
     int FilterFileByMoudle(const std::string& filename, std::string* expect_module_name);
     int AddWatchModuleStream(const std::string& module_name, const std::string& log_name);
+    void AddOldFile(const std::string& filename);
 
     // watch event
     void DestroyWatchPath(FileSystemInotify* fs_inotify);

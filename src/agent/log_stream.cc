@@ -75,6 +75,7 @@ LogStream::LogStream(std::string module_name, LogOptions log_options,
     //server_addr_(server_addr),
     stop_(false),
     fail_delay_thread_(1) {
+    total_stream_offset_ = 0;
     pthread_spin_init(&lock_, PTHREAD_PROCESS_PRIVATE);
     pthread_spin_init(&monitor_lock_, PTHREAD_PROCESS_PRIVATE);
     db_name_ = FLAGS_db_name;
@@ -217,6 +218,7 @@ void LogStream::DumpWriteEvent(const std::string& filename, uint64_t ino) {
     key += ino_str;
 
     value = filename;
+    VLOG(30) << "dump write event, key " << key << ", value " << value;
 
     std::string value1;
     leveldb::Status s;
@@ -432,19 +434,37 @@ void LogStream::Run() {
                 DumpWriteEvent(filename, ino);
 
                 // first log file add, check max fd wether is overflow
-                pthread_spin_lock(server_addr_lock_);
-                if (info_->nr_file_streams > FLAGS_agent_max_fd_num) {
-                    // fd overflow, ignore write event
-                    info_->history_fd_overflow_count++;
-                    pthread_spin_unlock(server_addr_lock_);
+                if (file_streams_.size() > FLAGS_agent_max_fd_num) {
+                    // close other file stream without checkpoint
+                    bool reclaim_succ = false;
+                    uint32_t stream_offset = (total_stream_offset_++) % (file_streams_.size());
+                    std::map<uint64_t, FileStream*>::iterator stream_it = file_streams_.begin();
+                    for (uint32_t tmp_i = 0; stream_it != file_streams_.end(); tmp_i++, stream_it++) {
+                        if (tmp_i >= stream_offset) {
+                            FileStream* tmp_file_stream = stream_it->second;
+                            if (tmp_file_stream->MarkDelete() >= 0) {
+                                VLOG(60) << "file stream evict, " << tmp_file_stream->GetFileName();
+                                file_streams_.erase(stream_it);
+                                delete tmp_file_stream;
+                                reclaim_succ = true;
+                                break;
+                            }
+                        }
+                    }
 
-                    // delay retry
-                    ThreadPool::Task task =
-                        boost::bind(&LogStream::AddWriteEvent, this, filename, ino);
-                    fail_delay_thread_.DelayTask(FLAGS_delay_retry_time, task);
-                    continue;
+                    if (!reclaim_succ) {
+                        pthread_spin_lock(server_addr_lock_);
+                        // fd overflow, ignore write event
+                        info_->history_fd_overflow_count++;
+                        pthread_spin_unlock(server_addr_lock_);
+
+                        // delay retry
+                        ThreadPool::Task task =
+                            boost::bind(&LogStream::AddWriteEvent, this, filename, ino);
+                        fail_delay_thread_.DelayTask(FLAGS_delay_retry_time, task);
+                        continue; // goto next round
+                    }
                 }
-                pthread_spin_unlock(server_addr_lock_);
 
                 // new file stream
                 int success;
@@ -457,10 +477,16 @@ void LogStream::Run() {
                 // may take a little long
                 ApplyRedoList(file_stream);
             }
-            DBKey* key;
+            DBKey* key = NULL;
             std::vector<std::string> line_vec;
             int file_read_res = 0;
-            if ((file_read_res = file_stream->Read(&line_vec, &key)) > 0) {
+            if ((file_read_res = file_stream->Read(&line_vec, &key)) >= 0) {
+                if (line_vec.size() == 0) { // key will be null
+                    VLOG(30) << "read file end, " << filename << ", ino " << ino;
+                    DeleteWatchEvent(filename, ino, false);
+                    continue;
+                }
+
                 std::vector<mdt::SearchEngine::RpcStoreRequest*> req_vec;
                 std::string table_name;
                 std::vector<std::string> monitor_vec;
@@ -469,21 +495,24 @@ void LogStream::Run() {
                 AsyncPush(req_vec, key);
                 AsyncPushMonitor(table_name, monitor_vec);
 
-                // read next offset
                 AddWriteEvent(filename, ino);
             } else if (file_read_res == 0) {
                 // file reach end
+                VLOG(30) << "read file end, " << filename << ", ino " << ino;
+                DeleteWatchEvent(filename, ino, false);
             } else if (file_read_res == -1) {
                 // file error, give it
                 LOG(WARNING) << "Missfile=" << file_stream->GetFileName() << " MissInode=" << ino;
-                DeleteWatchEvent(file_stream->GetFileName(), ino, false);
+                DeleteWatchEvent(filename, ino, false);
             } else if (file_read_res == -2) {
                 // delay retry
+                VLOG(30) << "delay schedule read, " << filename << ", ino " << ino;
                 ThreadPool::Task task =
                     boost::bind(&LogStream::AddWriteEvent, this, filename, ino);
                 fail_delay_thread_.DelayTask(FLAGS_delay_retry_time, task);
             } else {
                 VLOG(30) << "has write event, but read nothing";
+                DeleteWatchEvent(filename, ino, false);
             }
         }
 
@@ -501,7 +530,7 @@ void LogStream::Run() {
                     // TODO: need delete file_stream ??
                     file_streams_.erase(file_it);
                     delete file_stream;
-                    EraseWriteEvent(filename, ino);
+                    //EraseWriteEvent(filename, ino);// mark delete event
                 } else {
                     // add into delete queue without wakeup thread
                     ThreadPool::Task task =
@@ -802,6 +831,9 @@ int LogStream::ParseMdtRequest(const std::string table_name,
     for (uint32_t i = 0; i < line_vec.size(); i++) {
         int res = 0;
         std::string& line  = line_vec[i];
+        if (line.size() == 0) {
+            continue;
+        }
 
         // support line filter
         if (string_filter_.size() > 0) {
@@ -926,6 +958,10 @@ void LogStream::ApplyRedoList(FileStream* file_stream) {
 }
 
 int LogStream::AsyncPush(std::vector<mdt::SearchEngine::RpcStoreRequest*>& req_vec, DBKey* key) {
+    if (!key) {
+        return 0;
+    }
+
     pthread_spin_lock(server_addr_lock_);
     std::string server_addr = info_->collector_addr;
     info_->qps_use += req_vec.size();
@@ -1467,6 +1503,7 @@ FileStream::FileStream(std::string module_name, LogOptions log_options,
             break;
         }
     }
+    VLOG(60) << "new file stream, " << filename_ << ", ino " << ino_;
 
     //fd_ = open(filename.c_str(), O_RDONLY);
     //if (fd_ < 0) {
@@ -1480,6 +1517,7 @@ FileStream::FileStream(std::string module_name, LogOptions log_options,
     }
 }
 
+// dir, dir/log.bak
 bool FileStream::InodeToFileName(uint64_t ino, const std::string& filename, std::string* newname) {
     // get parent dir
     newname->clear();
@@ -1494,17 +1532,50 @@ bool FileStream::InodeToFileName(uint64_t ino, const std::string& filename, std:
         struct dirent* entry = NULL;
         if ((dirptr = opendir(dir.c_str())) != NULL) {
             while ((entry = readdir(dirptr)) != NULL) {
+                std::string fname(entry->d_name);
+                if (fname == "." || fname == "..") {
+                    continue;
+                }
                 // find filename match ino
                 uint64_t tmp_ino = (uint64_t)entry->d_ino;
                 if (tmp_ino == ino) {
-                    std::string fname(entry->d_name);
                     *newname = dir + fname;
                     closedir(dirptr);
                     return true;
                 }
+
+                // subdir, search into it
+                if (entry->d_type == DT_DIR) {
+                    std::string subdir = dir + fname + "/";
+                    if (FindLostInode(ino, subdir, newname)) {
+                        closedir(dirptr);
+                        return true;
+                    }
+                }
             }
             closedir(dirptr);
         }
+    }
+    return false;
+}
+bool FileStream::FindLostInode(uint64_t ino, const std::string& dir, std::string* newname) {
+    newname->clear();
+
+    // list dir
+    DIR* dirptr = NULL;
+    struct dirent* entry = NULL;
+    if ((dirptr = opendir(dir.c_str())) != NULL) {
+        while ((entry = readdir(dirptr)) != NULL) {
+            // find filename match ino
+            uint64_t tmp_ino = (uint64_t)entry->d_ino;
+            if (tmp_ino == ino) {
+                std::string fname(entry->d_name);
+                *newname = dir + fname;
+                closedir(dirptr);
+                return true;
+            }
+        }
+        closedir(dirptr);
     }
     return false;
 }
@@ -1527,14 +1598,38 @@ void FileStream::EncodeUint64BigEndian(uint64_t value, std::string* str) {
     *str = offset_str;
 }
 
-// key=dbname'\0'ino offset, value=size filename
+// key=CurrentOffset'\0'dbname'\0'ino;
+// value=offset
+void FileStream::MakeCurrentOffsetKey(const std::string& module_name,
+                                      const std::string& filename,
+                                      uint64_t ino,
+                                      uint64_t offset,
+                                      std::string* key,
+                                      std::string* value) {
+    *key = "CurrentOffset";
+    key->push_back('\0');
+    *key += module_name;
+    key->push_back('\0');
+
+    std::string ino_str;
+    EncodeUint64BigEndian(ino, &ino_str);
+    *key += ino_str;
+
+    if (value) {
+        std::string offset_str;
+        EncodeUint64BigEndian(offset, &offset_str);
+        *value = offset_str;
+    }
+}
+
+// key=dbname'\0'ino offset, value=size
 void FileStream::MakeKeyValue(const std::string& module_name,
-                               const std::string& filename,
-                               uint64_t ino,
-                               uint64_t offset,
-                               std::string* key,
-                               uint64_t size,
-                               std::string* value) {
+                              const std::string& filename,
+                              uint64_t ino,
+                              uint64_t offset,
+                              std::string* key,
+                              uint64_t size,
+                              std::string* value) {
     *key = module_name;
     key->push_back('\0');
     std::string ino_str;
@@ -1621,6 +1716,17 @@ int FileStream::RecoveryCheckPoint() {
     }
     delete db_it;
 
+    // update current_offset
+    std::string offset_key, offset_val;
+    MakeCurrentOffsetKey(module_name_, filename_, ino_, 0, &offset_key, NULL);
+    leveldb::Status s = log_options_.db->Get(leveldb::ReadOptions(), offset_key, &offset_val);
+    if (s.ok()) {
+        uint64_t tmp_offset = DecodeBigEndain(offset_val.c_str());
+        if (tmp_offset > current_offset_) {
+            current_offset_ = tmp_offset;
+        }
+    }
+
 #if 0
     // clear old file stat
     if (file_rename) {
@@ -1667,7 +1773,8 @@ int FileStream::RecoveryCheckPoint() {
 #endif
 
     end_ts = timer::get_micros();
-    VLOG(50) << "recovery " << filename_ << ", cost time " << end_ts - begin_ts;
+    VLOG(50) << "file stream recovery, file " << filename_ << ", ino " << ino_
+        << ", current_offset " << current_offset_ << ", cost time " << end_ts - begin_ts;
     return 0;
 }
 
@@ -1728,7 +1835,8 @@ void FileStream::GetCheckpoint(DBKey* key, uint64_t* offset, uint64_t* size) {
     pthread_spin_unlock(&lock_);
 }
 
-ssize_t FileStream::ParseLine(char* buf, ssize_t size, std::vector<std::string>* line_vec) {
+// if not half line, return size, else return sum of non-half line
+ssize_t FileStream::ParseLine(char* buf, ssize_t size, std::vector<std::string>* line_vec, bool read_half_line) {
     if (size <= 0) {
         return -1;
     }
@@ -1738,11 +1846,24 @@ ssize_t FileStream::ParseLine(char* buf, ssize_t size, std::vector<std::string>*
     boost::split((*line_vec), str, boost::is_any_of("\n"));
     nr_lines = line_vec->size();
     VLOG(30) << "parse line, nr of line " << nr_lines;
-    if ((buf[size -1] != '\n') || ((*line_vec)[nr_lines - 1].size() == 0)) {
+    bool half_line = false;
+    //if ((buf[size -1] != '\n') || ((*line_vec)[nr_lines - 1].size() == 0)) {
+    //    line_vec->pop_back();
+    //}
+    if ((*line_vec)[nr_lines - 1].size() == 0) {
+        // full line case : aaaaaaaaaaaa\nbbbbbbbbbb\nccccccccccccccccc\n
         line_vec->pop_back();
+    } else if (buf[size -1] != '\n') {
+        // half line case : aaaaaaaaaaaa\nbbbbbbbbbb\nccccccccccccccccc
+        half_line = true;
+        if (!read_half_line) {
+            line_vec->pop_back();
+        }
     }
     for (uint32_t i = 0; i < line_vec->size(); i++) {
-        res += (*line_vec)[i].size() + 1;
+        if (!half_line || (i != (line_vec->size() - 1))) {
+            res += (*line_vec)[i].size() + 1;
+        }
         VLOG(70) << "line: " << (*line_vec)[i] << ", res " << res << ", size " << size;
     }
     return res;
@@ -1754,6 +1875,7 @@ ssize_t FileStream::ParseLine(char* buf, ssize_t size, std::vector<std::string>*
 //      -2, flow control
 int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
     int ret = 0;
+    *key = NULL;
     if (fd_ >= 0) {
         // check mem cp pending request
         pthread_spin_lock(&lock_);
@@ -1776,16 +1898,20 @@ int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
             kfile_read_fail.Inc();
             ret = -1;
         } else if (res == 0) {
-           VLOG(30) << "file " << filename_ << ", read size 0";
+            VLOG(30) << "file " << filename_ << ", read size 0";
+            delete buf;
+            return 0;
+
         } else {
-            res = ParseLine(buf, res, line_vec);
-            if (res <= 0) {
+            uint64_t tmp_res = res;
+            res = ParseLine(buf, tmp_res, line_vec, tmp_res < size);
+            if ((tmp_res == size) && (res <= 0)) {
                 res = -2; // delay retry
             }
         }
         delete buf;
 
-        if (res > 0) {
+        if (res >= 0) {
             kfile_read_success.Inc();
 
             *key = new DBKey;
@@ -1867,12 +1993,33 @@ int FileStream::LogCheckPoint(uint64_t offset, uint64_t size) {
 
 int FileStream::DeleteCheckoutPoint(DBKey* key) {
     // delete mem checkpoint
+    bool should_dump_offset = false;
     pthread_spin_lock(&lock_);
     std::map<uint64_t, uint64_t>::iterator it =  mem_checkpoint_list_.find(key->offset);
     if (it != mem_checkpoint_list_.end()) {
         mem_checkpoint_list_.erase(it);
     }
+    // dump current offset into db
+    if (mem_checkpoint_list_.size() == 0) {
+        should_dump_offset = true;
+    }
     pthread_spin_unlock(&lock_);
+
+    if (should_dump_offset) {
+        std::string offset_key, offset_val;
+        MakeCurrentOffsetKey(module_name_, filename_, key->ino, current_offset_, &offset_key, &offset_val);
+        leveldb::Status s1 = log_options_.db->Put(leveldb::WriteOptions(), offset_key, offset_val);
+        if (!s1.ok()) {
+            delete log_options_.db;
+            log_options_.db = NULL;
+            leveldb::Options options;
+            s1 = leveldb::DB::Open(options, log_options_.db_dir.c_str(), &log_options_.db);
+            if (!s1.ok()) {
+                LOG(WARNING) << "leveldb reopen errno " << s1.ToString();
+                kleveldb_reopen_fail.Inc();
+            }
+        }
+    }
 
     // delete log checkpoint
     std::string key_str;
@@ -1900,18 +2047,43 @@ int FileStream::DeleteCheckoutPoint(DBKey* key) {
 int FileStream::CheckPointRead(std::vector<std::string>* line_vec, DBKey** key,
                                uint64_t offset, uint64_t size) {
     int ret = 0;
+    *key = NULL;
+    struct stat stat_buf1;
+    uint64_t st_size = 0;
+    if (lstat(filename_.c_str(), &stat_buf1) >= 0) {
+        st_size = (uint64_t)stat_buf1.st_size;
+    }
+    if (size == 0) {
+        if (st_size > current_offset_) {
+            size = st_size - current_offset_;
+            if (size > 65536) {
+                size = 65536;
+            }
+        } else {
+            return ret;
+        }
+    }
     if (fd_ > 0) {
         kcheckpoint_read_num.Inc();
 
         VLOG(30) << "file " << filename_ << " read from cp, offset " << offset << ", size " << size;
         char* buf = new char[size];
         ssize_t res = pread(fd_, buf, size, offset);
+#if 0
         if (res < (int64_t)size) {
             LOG(WARNING) << "redo cp, read file error " << offset << ", size " << size << ", res " << res;
             ret = -1;
         }
-        res = ParseLine(buf, res, line_vec);
-        if (res != (int64_t)size) {
+#endif
+        // file error or read file end
+        if (res <= 0) {
+            LOG(WARNING) << "redo cp, read file error " << offset << ", size " << size << ", res " << res;
+            delete buf;
+            return 0;
+        }
+        uint64_t tmp_res = res;
+        res = ParseLine(buf, tmp_res, line_vec, tmp_res < size);
+        if ((tmp_res == size) && (res <= 0)) {
             LOG(WARNING) << "redo cp, parse buf, size not match, offset " << offset << ", size " << size << ", res " << res;
             ret = -1;
         } else {

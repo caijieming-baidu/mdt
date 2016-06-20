@@ -95,6 +95,7 @@ message RpcAddWatchModuleStreamResponse {
 ///////////////////////////////////
 message RpcTraceGalaxyAppRequest {
     optional string job_name = 1;
+    optional string job_id = 2;
     optional string work_dir = 3; // /home/galaxy/agent/work_dir; full path = /home/galaxy/agent/work_dir/podid/podid+taskid/userlog dir 
     optional string user_log_dir = 4;
     optional string db_name = 5; // module name

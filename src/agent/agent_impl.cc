@@ -541,7 +541,58 @@ int AgentImpl::AddWatchModuleStream(const std::string& module_name, const std::s
         stream->AddTableName(log_name);
     }
     pthread_spin_unlock(&lock_);
+
+    // add old file
+    AddOldFile(log_name);
     return 0;
+}
+void AgentImpl::AddOldFile(const std::string& filename) {
+    std::vector<std::string> log_vec;
+    pthread_spin_lock(&lock_);
+    std::map<std::string, FileSystemInotify*>::iterator it = inotify_.begin();
+    for (; it != inotify_.end(); ++it) {
+        log_vec.push_back(it->first);
+    }
+    pthread_spin_unlock(&lock_);
+
+    for (uint32_t i = 0; i < log_vec.size(); i++) {
+        // list dir
+        DIR* dirptr = NULL;
+        struct dirent* entry = NULL;
+        if ((dirptr = opendir(log_vec[i].c_str())) != NULL) {
+            while ((entry = readdir(dirptr)) != NULL) {
+                std::string fname(entry->d_name);
+                if (fname == "." || fname == "..") {
+                    continue;
+                }
+
+                // subdir, search into it
+                if (entry->d_type == DT_DIR) {
+                    std::string subdir = log_vec[i] + "/" + fname;
+                    DIR* subdirptr = NULL;
+                    struct dirent* subentry = NULL;
+                    if ((subdirptr = opendir(subdir.c_str())) != NULL) {
+                        while ((subentry = readdir(subdirptr)) != NULL) {
+                            std::string subfname(subentry->d_name);
+                            if (subfname == "." || subfname == "..") {
+                                continue;
+                            }
+
+                            if (subentry->d_type == DT_REG) {
+                                VLOG(30) << "add old file, dir " << subdir << ", tg " << subfname;
+                                AddWriteEvent(subdir, subfname, NULL);
+                            }
+                        }
+                        closedir(subdirptr);
+                    }
+                } else if (entry->d_type == DT_REG) {
+                    VLOG(30) << "add old file, dir " << log_vec[i] << ", tg " << fname;
+                    AddWriteEvent(log_vec[i], fname, NULL);
+                }
+            }
+            closedir(dirptr);
+        }
+    }
 }
 
 int AgentImpl::AddMonitor(const mdt::LogAgentService::RpcMonitorRequest* request) {

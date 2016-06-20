@@ -401,10 +401,50 @@ void SchedulerImpl::GetNodeList(::google::protobuf::RpcController* controller,
     return;
 }
 
+void SchedulerImpl::RepeatedAddAgentWatchPath(std::string agent_addr) {
+    mdt::LogAgentService::LogAgentService_Stub* service;
+    rpc_client_->GetMethodList(agent_addr, &service);
+    mdt::LogAgentService::RpcAddWatchPathRequest* req = new mdt::LogAgentService::RpcAddWatchPathRequest();
+    mdt::LogAgentService::RpcAddWatchPathResponse* resp = new mdt::LogAgentService::RpcAddWatchPathResponse();
+
+    pthread_spin_lock(&galaxy_trace_lock_);
+    std::map<std::string, int>& path_vec = path_map_[agent_addr];
+    std::map<std::string, int>::iterator path_it = path_vec.begin();
+    for (; path_it != path_vec.end(); path_it++) {
+        req->set_watch_path(path_it->first);
+        rpc_client_->SyncCall(service, &mdt::LogAgentService::LogAgentService_Stub::RpcAddWatchPath, req, resp);
+        if (resp->status() == mdt::LogAgentService::kRpcOk) {
+            // TODO: success
+        } else {
+        }
+    }
+    pthread_spin_unlock(&galaxy_trace_lock_);
+
+    delete req;
+    delete resp;
+    delete service;
+
+    // delay re-send
+    ThreadPool::Task task = boost::bind(&SchedulerImpl::RepeatedAddAgentWatchPath, this, agent_addr);
+    galaxy_trace_pool_.DelayTask(FLAGS_scheduler_galaxy_app_trace_period, task);
+}
 void SchedulerImpl::DoRpcAddAgentWatchPath(::google::protobuf::RpcController* controller,
                  const mdt::LogSchedulerService::RpcAddAgentWatchPathRequest* request,
                  mdt::LogSchedulerService::RpcAddAgentWatchPathResponse* response,
                  ::google::protobuf::Closure* done) {
+    bool need_resend = false;
+    std::string agent_addr = request->agent_addr();
+    pthread_spin_lock(&galaxy_trace_lock_);
+    if (path_map_.find(agent_addr) == path_map_.end()) {
+        need_resend = true;
+    }
+    std::map<std::string, int>& path_vec = path_map_[agent_addr];
+    if (path_vec.find(request->watch_path()) == path_vec.end()) {
+        need_resend = true;
+    }
+    path_vec[request->watch_path()] = 0;
+    pthread_spin_unlock(&galaxy_trace_lock_);
+
     mdt::LogAgentService::LogAgentService_Stub* service;
     rpc_client_->GetMethodList(request->agent_addr(), &service);
     mdt::LogAgentService::RpcAddWatchPathRequest* req = new mdt::LogAgentService::RpcAddWatchPathRequest();
@@ -423,6 +463,12 @@ void SchedulerImpl::DoRpcAddAgentWatchPath(::google::protobuf::RpcController* co
     delete service;
 
     done->Run();
+
+    // delay re-send
+    if (need_resend) {
+        ThreadPool::Task task = boost::bind(&SchedulerImpl::RepeatedAddAgentWatchPath, this, agent_addr);
+        galaxy_trace_pool_.DelayTask(FLAGS_scheduler_galaxy_app_trace_period, task);
+    }
 }
 
 void SchedulerImpl::RpcAddAgentWatchPath(::google::protobuf::RpcController* controller,
@@ -434,10 +480,57 @@ void SchedulerImpl::RpcAddAgentWatchPath(::google::protobuf::RpcController* cont
     return;
 }
 
+void SchedulerImpl::RepeatedAddAgentWatchModuleStream(std::string agent_addr) {
+    mdt::LogAgentService::LogAgentService_Stub* service;
+    rpc_client_->GetMethodList(agent_addr, &service);
+    mdt::LogAgentService::RpcAddWatchModuleStreamRequest* req = new mdt::LogAgentService::RpcAddWatchModuleStreamRequest();
+    mdt::LogAgentService::RpcAddWatchModuleStreamResponse* resp = new mdt::LogAgentService::RpcAddWatchModuleStreamResponse();
+
+    pthread_spin_lock(&galaxy_trace_lock_);
+    std::map<std::string, int>& db_vec = db_map_[agent_addr];
+    std::map<std::string, int>::iterator table_it = db_vec.begin();
+    for (; table_it != db_vec.end(); table_it++) {
+        std::string db_name, table_name;
+        ParseIndexConfigureName(table_it->first, &db_name, &table_name);
+        req->set_production_name(db_name);
+        req->set_log_name(table_name);
+
+        rpc_client_->SyncCall(service, &mdt::LogAgentService::LogAgentService_Stub::RpcAddWatchModuleStream, req, resp);
+        if (resp->status() == mdt::LogAgentService::kRpcOk) {
+            // TODO: success
+        } else {
+        }
+    }
+    pthread_spin_unlock(&galaxy_trace_lock_);
+
+    delete req;
+    delete resp;
+    delete service;
+
+    // delay re-send
+    ThreadPool::Task task = boost::bind(&SchedulerImpl::RepeatedAddAgentWatchModuleStream, this, agent_addr);
+    galaxy_trace_pool_.DelayTask(FLAGS_scheduler_galaxy_app_trace_period, task);
+}
 void SchedulerImpl::DoRpcAddWatchModuleStream(::google::protobuf::RpcController* controller,
                  const mdt::LogSchedulerService::RpcAddWatchModuleStreamRequest* request,
                  mdt::LogSchedulerService::RpcAddWatchModuleStreamResponse* response,
                  ::google::protobuf::Closure* done) {
+    bool need_resend = false;
+    std::string agent_addr = request->agent_addr();
+    std::string name;
+    GetIndexConfigureName(request->production_name(), request->log_name(), &name);
+
+    pthread_spin_lock(&galaxy_trace_lock_);
+    if (db_map_.find(agent_addr) == db_map_.end()) {
+        need_resend = true;
+    }
+    std::map<std::string, int>& db_vec = db_map_[agent_addr];
+    if (db_vec.find(name) == db_vec.end()) {
+        need_resend = true;
+    }
+    db_vec[name] = 0;
+    pthread_spin_unlock(&galaxy_trace_lock_);
+
     mdt::LogAgentService::LogAgentService_Stub* service;
     rpc_client_->GetMethodList(request->agent_addr(), &service);
     mdt::LogAgentService::RpcAddWatchModuleStreamRequest* req = new mdt::LogAgentService::RpcAddWatchModuleStreamRequest();
@@ -457,6 +550,12 @@ void SchedulerImpl::DoRpcAddWatchModuleStream(::google::protobuf::RpcController*
     delete service;
 
     done->Run();
+
+    // delay re-send
+    if (need_resend) {
+        ThreadPool::Task task = boost::bind(&SchedulerImpl::RepeatedAddAgentWatchModuleStream, this, agent_addr);
+        galaxy_trace_pool_.DelayTask(FLAGS_scheduler_galaxy_app_trace_period, task);
+    }
 }
 
 void SchedulerImpl::RpcAddWatchModuleStream(::google::protobuf::RpcController* controller,
@@ -517,7 +616,8 @@ void SchedulerImpl::DoRpcTraceGalaxyApp(boost::shared_ptr<TraceInfo> trace_info)
     }
 
     std::vector<::baidu::galaxy::PodInformation> pods;
-    if (!trace_info->galaxy->GetPodsByName(trace_info->job_name, &pods)) {
+    //if (!trace_info->galaxy->GetPodsByName(trace_info->job_name, &pods)) {
+    if (!trace_info->galaxy->ShowPod(trace_info->job_id, &pods)) {
         LOG(WARNING) << "galaxy get Pods error, " << trace_info->job_name;
         if (trace_info->flag == ENABLE_TRACE) {
             ThreadPool::Task task = boost::bind(&SchedulerImpl::DoRpcTraceGalaxyApp, this, trace_info);
@@ -612,6 +712,7 @@ void SchedulerImpl::RpcTraceGalaxyApp(::google::protobuf::RpcController* control
         trace_info->configure.CopyFrom(*request);
         trace_info->flag = ENABLE_TRACE;
         trace_info->job_name = request->job_name();
+        trace_info->job_id = request->job_id();
         galaxy_trace_rule_[request->job_name()] = trace_info;
         need_queue_task = true;
     }
@@ -803,14 +904,60 @@ void SchedulerImpl::TranslateMonitorRequest(const mdt::LogSchedulerService::RpcM
     return;
 }
 
+void SchedulerImpl::RepeatedMonitor(std::string name) {
+    mdt::LogSchedulerService::RpcMonitorRequest monitor;
+
+    pthread_spin_lock(&monitor_lock_);
+    monitor.CopyFrom(monitor_handler_set_[name]);
+    pthread_spin_unlock(&monitor_lock_);
+
+    // send monitor info to all agent
+    // TODO: support label
+    std::vector<std::string> addr_vec;
+    pthread_spin_lock(&agent_lock_);
+    std::map<std::string, AgentInfo>::iterator it = agent_map_.begin();
+    for (; it != agent_map_.end(); ++it) {
+        const std::string& addr = it->first;
+        addr_vec.push_back(addr);
+    }
+    pthread_spin_unlock(&agent_lock_);
+
+    mdt::LogAgentService::RpcMonitorRequest temp_req;
+    TranslateMonitorRequest(&monitor, &temp_req);
+    LOG(INFO) << name << ", " << temp_req.DebugString() << std::endl;
+
+    for (uint32_t i = 0; i < addr_vec.size(); i++) {
+        mdt::LogAgentService::LogAgentService_Stub* service;
+        rpc_client_->GetMethodList(addr_vec[i], &service);
+        mdt::LogAgentService::RpcMonitorRequest* req = new mdt::LogAgentService::RpcMonitorRequest();
+        mdt::LogAgentService::RpcMonitorResponse* resp = new mdt::LogAgentService::RpcMonitorResponse();
+
+        req->CopyFrom(temp_req);
+        boost::function<void (const mdt::LogAgentService::RpcMonitorRequest*,
+                mdt::LogAgentService::RpcMonitorResponse*,
+                bool, int)> callback =
+            boost::bind(&SchedulerImpl::AsyncPushMonitorCallback,
+                    this, _1, _2, _3, _4, service);
+        rpc_client_->AsyncCall(service,
+                &mdt::LogAgentService::LogAgentService_Stub::RpcMonitor,
+                req, resp, callback);
+    }
+
+    ThreadPool::Task task = boost::bind(&SchedulerImpl::RepeatedMonitor, this, name);
+    galaxy_trace_pool_.DelayTask(FLAGS_scheduler_galaxy_app_trace_period, task);
+}
 void SchedulerImpl::DoRpcMonitor(::google::protobuf::RpcController* controller,
                     const mdt::LogSchedulerService::RpcMonitorRequest* request,
                     mdt::LogSchedulerService::RpcMonitorResponse* response,
                     ::google::protobuf::Closure* done) {
+    bool need_resend = false;
     // add monitor info
     std::string mname;
     GetMonitorName(request->db_name(), request->table_name(), &mname);
     pthread_spin_lock(&monitor_lock_);
+    if (monitor_handler_set_.find(mname) == monitor_handler_set_.end()) {
+        need_resend = true;
+    }
     mdt::LogSchedulerService::RpcMonitorRequest& monitor = monitor_handler_set_[mname];
     monitor.CopyFrom(*request);
     pthread_spin_unlock(&monitor_lock_);
@@ -848,6 +995,11 @@ void SchedulerImpl::DoRpcMonitor(::google::protobuf::RpcController* controller,
     }
 
     done->Run();
+
+    if (need_resend) {
+        ThreadPool::Task task = boost::bind(&SchedulerImpl::RepeatedMonitor, this, mname);
+        galaxy_trace_pool_.DelayTask(FLAGS_scheduler_galaxy_app_trace_period, task);
+    }
     return;
 }
 
@@ -971,6 +1123,13 @@ void SchedulerImpl::GetIndexConfigureName(const std::string& db_name, const std:
     *dest_name = "Index#" + db_name + "#" + table_name;
     return;
 }
+void SchedulerImpl::ParseIndexConfigureName(const std::string& name, std::string* db_name, std::string* table_name) {
+    std::size_t found = name.rfind(std::string("#"));
+    if (found != std::string::npos) {
+        *table_name = std::string(name, found + 1, name.size() - found - 1);
+        *db_name = std::string(name, strlen("Index#"), found - strlen("Index#"));
+    }
+}
 
 void SchedulerImpl::TranslateUpdateIndexRequest(const mdt::LogSchedulerService::RpcUpdateIndexRequest* request,
                                             mdt::LogAgentService::RpcUpdateIndexRequest* req) {
@@ -993,14 +1152,60 @@ void SchedulerImpl::TranslateUpdateIndexRequest(const mdt::LogSchedulerService::
     return;
 }
 
+void SchedulerImpl::RepeatedUpdateIndex(std::string name) {
+    mdt::LogSchedulerService::RpcUpdateIndexRequest index;
+    pthread_spin_lock(&monitor_lock_);
+    index.CopyFrom(index_set_[name]);
+    pthread_spin_unlock(&monitor_lock_);
+
+    // send index info to all agent
+    // TODO: support label
+    std::vector<std::string> addr_vec;
+    pthread_spin_lock(&agent_lock_);
+    std::map<std::string, AgentInfo>::iterator it = agent_map_.begin();
+    for (; it != agent_map_.end(); ++it) {
+        const std::string& addr = it->first;
+        addr_vec.push_back(addr);
+    }
+    pthread_spin_unlock(&agent_lock_);
+
+    mdt::LogAgentService::RpcUpdateIndexRequest temp_req;
+    TranslateUpdateIndexRequest(&index, &temp_req);
+    LOG(INFO) << name << ", " << temp_req.DebugString() << std::endl;
+
+    for (uint32_t i = 0; i < addr_vec.size(); i++) {
+        mdt::LogAgentService::LogAgentService_Stub* service;
+        rpc_client_->GetMethodList(addr_vec[i], &service);
+        mdt::LogAgentService::RpcUpdateIndexRequest* req = new mdt::LogAgentService::RpcUpdateIndexRequest();
+        mdt::LogAgentService::RpcUpdateIndexResponse* resp = new mdt::LogAgentService::RpcUpdateIndexResponse();
+
+        req->CopyFrom(temp_req);
+        boost::function<void (const mdt::LogAgentService::RpcUpdateIndexRequest*,
+                mdt::LogAgentService::RpcUpdateIndexResponse*,
+                bool, int)> callback =
+            boost::bind(&SchedulerImpl::AsyncUpdateIndexCallback,
+                    this, _1, _2, _3, _4, service);
+        rpc_client_->AsyncCall(service,
+                &mdt::LogAgentService::LogAgentService_Stub::RpcUpdateIndex,
+                req, resp, callback);
+    }
+
+    // delay re-send
+    ThreadPool::Task task = boost::bind(&SchedulerImpl::RepeatedUpdateIndex, this, name);
+    galaxy_trace_pool_.DelayTask(FLAGS_scheduler_galaxy_app_trace_period, task);
+}
 void SchedulerImpl::DoRpcUpdateIndex(::google::protobuf::RpcController* controller,
                        const mdt::LogSchedulerService::RpcUpdateIndexRequest* request,
                        mdt::LogSchedulerService::RpcUpdateIndexResponse* response,
                        ::google::protobuf::Closure* done) {
+    bool need_resend = false;
     // add monitor info
     std::string mname;
     GetIndexConfigureName(request->db_name(), request->table_name(), &mname);
     pthread_spin_lock(&monitor_lock_);
+    if (index_set_.find(mname) == index_set_.end()) {
+        need_resend = true;
+    }
     mdt::LogSchedulerService::RpcUpdateIndexRequest& index = index_set_[mname];
     index.CopyFrom(*request);
     pthread_spin_unlock(&monitor_lock_);
@@ -1038,6 +1243,12 @@ void SchedulerImpl::DoRpcUpdateIndex(::google::protobuf::RpcController* controll
     }
 
     done->Run();
+
+    if (need_resend) {
+        // delay re-send
+        ThreadPool::Task task = boost::bind(&SchedulerImpl::RepeatedUpdateIndex, this, mname);
+        galaxy_trace_pool_.DelayTask(FLAGS_scheduler_galaxy_app_trace_period, task);
+    }
 }
 
 void SchedulerImpl::RpcUpdateIndex(::google::protobuf::RpcController* controller,
