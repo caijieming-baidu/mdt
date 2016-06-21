@@ -25,6 +25,7 @@ DEFINE_bool(enable_data_compress, true, "use snappy to compress data in filesyst
 DEFINE_bool(enable_async_index_write, true, "write data and async write index");
 DEFINE_int64(async_tera_writer_num, 20, "num of async index writer");
 DEFINE_bool(ignore_tera_write_error, false, "ignore tera write error");
+DEFINE_bool(ignore_tera_timestamp_error, false, "ignore tera timestamp write error");
 
 // read ops param
 DEFINE_int64(read_file_thread_num, 50,  "num of read file threads");

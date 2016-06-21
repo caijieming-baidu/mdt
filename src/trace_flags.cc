@@ -35,6 +35,7 @@ DEFINE_string(fixed_index_list, "url:5,time:2", "use for fix index list match");
 DEFINE_int64(delay_retry_time, 2000, "in ms, time period after async push fail to retry");
 
 DEFINE_bool(use_regex_index_pattern, true, "new regex index search");
+DEFINE_bool(enable_reclaim_ino, false, "enable reclaim ino");
 
 ///////////////////////////////////////////
 // scheduler flags

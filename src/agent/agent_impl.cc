@@ -579,15 +579,19 @@ void AgentImpl::AddOldFile(const std::string& filename) {
                             }
 
                             if (subentry->d_type == DT_REG) {
-                                VLOG(30) << "add old file, dir " << subdir << ", tg " << subfname;
-                                AddWriteEvent(subdir, subfname, NULL);
+                                if (subfname.find(filename) != std::string::npos) {
+                                    VLOG(30) << "add old file, dir " << subdir << ", tg " << subfname;
+                                    AddWriteEvent(subdir, subfname, NULL);
+                                }
                             }
                         }
                         closedir(subdirptr);
                     }
                 } else if (entry->d_type == DT_REG) {
-                    VLOG(30) << "add old file, dir " << log_vec[i] << ", tg " << fname;
-                    AddWriteEvent(log_vec[i], fname, NULL);
+                    if (fname.find(filename) != std::string::npos) {
+                        VLOG(30) << "add old file, dir " << log_vec[i] << ", tg " << fname;
+                        AddWriteEvent(log_vec[i], fname, NULL);
+                    }
                 }
             }
             closedir(dirptr);

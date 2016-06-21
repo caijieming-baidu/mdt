@@ -41,6 +41,7 @@ DECLARE_bool(enable_data_compress);
 DECLARE_bool(enable_async_index_write);
 DECLARE_int64(async_tera_writer_num);
 DECLARE_bool(ignore_tera_write_error);
+DECLARE_bool(ignore_tera_timestamp_error);
 
 namespace mdt {
 static ThreadPool GLOBAL_read_row_data_threads(FLAGS_read_file_thread_num);
@@ -903,18 +904,25 @@ void BatchIndexCallback(tera::RowMutation* row) {
             context->mu.Lock();
             // resend write req
             if (context->row_table_map[(uint64_t)(row)] == (uint64_t)BatchWriteContext_ts_table) {
-                // timestamp table write error, scheduler to other timestamp table
-                tera::Table* ts_table = context->table->GetTimestampTable();
-                context->row_table_map.erase((uint64_t)(row));
+                if (FLAGS_ignore_tera_timestamp_error) {
+                    context->row_table_map.erase((uint64_t)(row));
+                    context->mu.Unlock();
 
-                tera::RowMutation* ts_row = ts_table->NewRowMutation(row->RowKey());
-                context->row_table_map[((uint64_t)(ts_row))] = (uint64_t)BatchWriteContext_ts_table;
-                ts_row->Put(mu.family, mu.qualifier, mu.timestamp, mu.value);
-                ts_row->SetContext(context);
-                ts_row->SetCallBack(BatchIndexCallback);
-                context->mu.Unlock();
+                    context->Release();
+                } else {
+                    // timestamp table write error, scheduler to other timestamp table
+                    tera::Table* ts_table = context->table->GetTimestampTable();
+                    context->row_table_map.erase((uint64_t)(row));
 
-                ts_table->ApplyMutation(ts_row);
+                    tera::RowMutation* ts_row = ts_table->NewRowMutation(row->RowKey());
+                    context->row_table_map[((uint64_t)(ts_row))] = (uint64_t)BatchWriteContext_ts_table;
+                    ts_row->Put(mu.family, mu.qualifier, mu.timestamp, mu.value);
+                    ts_row->SetContext(context);
+                    ts_row->SetCallBack(BatchIndexCallback);
+                    context->mu.Unlock();
+
+                    ts_table->ApplyMutation(ts_row);
+                }
             } else {
                 tera::Table* index_table = (tera::Table*)(context->row_table_map[(uint64_t)(row)]);
                 context->row_table_map.erase((uint64_t)(row));

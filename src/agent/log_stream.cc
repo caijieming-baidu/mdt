@@ -52,9 +52,17 @@ DECLARE_int64(delay_retry_time);
 DECLARE_int64(agent_max_fd_num);
 
 DECLARE_bool(use_regex_index_pattern);
+DECLARE_bool(enable_reclaim_ino);
 
 namespace mdt {
 namespace agent {
+
+/*
+ *      leveldb's data: MagicYoYo1989, CurrentOffset, checkpoint
+ *      MagicYoYo1989=db+ino, path
+ *      CurrentOffset=db+ino, offset
+ *      CheckPoint=db+ino+offset, size
+ */
 
 static int64_t kLastLogWarningTime;
 
@@ -164,6 +172,7 @@ LogStream::LogStream(std::string module_name, LogOptions log_options,
     user_time_ = FLAGS_user_time;
     time_type_ = FLAGS_time_type;
 
+    last_ino_check_ts_ = mdt::timer::get_micros();
     last_update_time_ = mdt::timer::get_micros();
     pthread_create(&tid_, NULL, LogStreamWrapper, this);
 
@@ -319,6 +328,7 @@ void LogStream::Run() {
         std::map<uint64_t, std::string> local_delete_event;
         std::queue<DBKey*> local_key_queue;
         std::queue<DBKey*> local_failed_key_queue;
+        std::map<uint64_t, uint64_t> local_ctrl_event;
 
         pthread_spin_lock(&lock_);
         VLOG(30) << "event: write " << write_event_.size() << ", delete " << delete_event_.size()
@@ -337,6 +347,10 @@ void LogStream::Run() {
         }
         if (failed_key_queue_.size()) {
             swap(failed_key_queue_, local_failed_key_queue);
+            has_event = true;
+        }
+        if (ctrl_event_.size()) {
+            swap(ctrl_event_, local_ctrl_event);
             has_event = true;
         }
         pthread_spin_unlock(&lock_);
@@ -472,6 +486,7 @@ void LogStream::Run() {
                 if (success < 0) {
                     // TODO: log has been delete before it can be collector, :(-
                     LOG(WARNING) << "new file stream " << file_stream->GetFileName() << ", faile, ino " << ino;
+                    kfile_miss_num.Inc();
                 }
                 file_streams_[ino] = file_stream;
                 // may take a little long
@@ -502,6 +517,7 @@ void LogStream::Run() {
                 DeleteWatchEvent(filename, ino, false);
             } else if (file_read_res == -1) {
                 // file error, give it
+                kfile_miss_num.Inc();
                 LOG(WARNING) << "Missfile=" << file_stream->GetFileName() << " MissInode=" << ino;
                 DeleteWatchEvent(filename, ino, false);
             } else if (file_read_res == -2) {
@@ -541,6 +557,26 @@ void LogStream::Run() {
             }
         }
 
+/*
+ *      LEVELDB data: MagicYoYo1989, CurrentOffset, checkpoint
+ *      MagicYoYo1989=db+ino, path
+ *      CurrentOffset=db+ino, offset
+ *      CheckPoint=db+ino+offset, size
+ */
+        int64_t curr_check_ts = mdt::timer::get_micros();
+        if (curr_check_ts - last_ino_check_ts_ > 600000000) { // checkout per 10 min
+            last_ino_check_ts_ = curr_check_ts;
+
+            if (FLAGS_enable_reclaim_ino) {
+                ReclaimOrphanInode(module_name_);
+            }
+        } else {
+            ThreadPool::Task task1 =
+                boost::bind(&LogStream::AddCtrlEvent, this, 0);
+            fail_delay_thread_.DelayTask(60000, task1);
+        }
+
+        // try to dump some information
         int64_t end_ts = mdt::timer::get_micros();
         VLOG(30) << "logstream run duration, " << end_ts - start_ts << ", end ts " << end_ts << ", start ts " << last_update_time_;
         int64_t curr_pending_req = 0;
@@ -611,6 +647,9 @@ void LogStream::Run() {
 
             key1 = module_name_ + "." + hostname_ + "." + "kkeyword_filter_num";
             log_options_.counter_map->Add(key1, kkeyword_filter_num.Clear());
+
+            key1 = module_name_ + "." + hostname_ + "." + "kfile_miss_num";
+            log_options_.counter_map->Add(key1, kfile_miss_num.Clear());
         }
 
         pthread_spin_lock(server_addr_lock_);
@@ -620,6 +659,165 @@ void LogStream::Run() {
         }
         pthread_spin_unlock(server_addr_lock_);
     }
+}
+
+// key=CurrentOffset'\0'dbname'\0'ino;
+// value=offset
+void LogStream::MakeCurrentOffsetKey(const std::string& module_name,
+                                      const std::string& filename,
+                                      uint64_t ino,
+                                      uint64_t offset,
+                                      std::string* key,
+                                      std::string* value) {
+    *key = "CurrentOffset";
+    key->push_back('\0');
+    *key += module_name;
+    key->push_back('\0');
+
+    std::string ino_str;
+    EncodeUint64BigEndian(ino, &ino_str);
+    *key += ino_str;
+
+    if (value) {
+        std::string offset_str;
+        EncodeUint64BigEndian(offset, &offset_str);
+        *value = offset_str;
+    }
+}
+
+// key=dbname'\0'ino offset, value=size
+void LogStream::MakeKeyValue(const std::string& module_name,
+                              const std::string& filename,
+                              uint64_t ino,
+                              uint64_t offset,
+                              std::string* key,
+                              uint64_t size,
+                              std::string* value) {
+    *key = module_name;
+    key->push_back('\0');
+    std::string ino_str;
+    EncodeUint64BigEndian(ino, &ino_str);
+    *key += ino_str;
+
+    std::string offset_str;
+    EncodeUint64BigEndian(offset, &offset_str);
+    *key += offset_str;
+
+    if (value) {
+        EncodeUint64BigEndian(size, value);
+    }
+    return;
+}
+
+void LogStream::ParseKeyValue(const leveldb::Slice& key,
+                               const leveldb::Slice& value,
+                               uint64_t* ino,
+                               uint64_t* offset, uint64_t* size) {
+    int mlen = strlen(key.data());
+    //leveldb::Slice module_name = leveldb::Slice(key.data(), mlen);
+    leveldb::Slice ino_str = leveldb::Slice(key.data() + mlen + 1, 8);
+    *ino = DecodeBigEndain(ino_str.data());
+
+    leveldb::Slice offset_str = leveldb::Slice(key.data() + mlen + 1 + 8, 8);
+    *offset = DecodeBigEndain(offset_str.data());
+
+    *size = DecodeBigEndain(value.data());
+}
+
+void LogStream::ReclaimOrphanInode(const std::string& db_name) {
+    // fname + ino
+    std::vector<std::pair<std::string, uint64_t> > event_vec;
+    RecoverWriteEvent(&event_vec);
+
+    for (uint32_t i = 0; i < event_vec.size(); i++) {
+        std::string newname;
+        if (!InodeToFileName(event_vec[i].second, event_vec[i].first, &newname)) {
+            // file has been delete, check cp
+            leveldb::Iterator* db_it = log_options_.db->NewIterator(leveldb::ReadOptions());
+            std::string startkey, endkey;
+            MakeKeyValue(module_name_, event_vec[i].first, event_vec[i].second, 0, &startkey, 0, NULL);
+            MakeKeyValue(module_name_, event_vec[i].first, event_vec[i].second, 0xffffffffffffffff, &endkey, 0, NULL);
+            bool has_cp = false;
+            for (db_it->Seek(startkey);
+                    db_it->Valid() && db_it->key().ToString() < endkey;
+                    db_it->Next()) {
+                has_cp = true;
+                break;
+            }
+            delete db_it;
+            if (has_cp) {
+                continue;
+            }
+
+            // no check point, TODO: may use write batch
+            EraseWriteEvent(event_vec[i].first, event_vec[i].second);
+            std::string offset_key;
+            MakeCurrentOffsetKey(db_name, event_vec[i].first, event_vec[i].second, 0, &offset_key, NULL);
+            log_options_.db->Delete(leveldb::WriteOptions(), offset_key);
+        }
+    }
+}
+
+bool LogStream::InodeToFileName(uint64_t ino, const std::string& filename, std::string* newname) {
+    // get parent dir
+    newname->clear();
+    std::string dir;
+    std::string delim("/");
+    std::size_t pos = filename.rfind(delim);
+    if (pos != std::string::npos) {
+        dir = std::string(filename, 0, pos + 1);
+
+        // list dir
+        DIR* dirptr = NULL;
+        struct dirent* entry = NULL;
+        if ((dirptr = opendir(dir.c_str())) != NULL) {
+            while ((entry = readdir(dirptr)) != NULL) {
+                std::string fname(entry->d_name);
+                if (fname == "." || fname == "..") {
+                    continue;
+                }
+                // find filename match ino
+                uint64_t tmp_ino = (uint64_t)entry->d_ino;
+                if (tmp_ino == ino) {
+                    *newname = dir + fname;
+                    closedir(dirptr);
+                    return true;
+                }
+
+                // subdir, search into it
+                if (entry->d_type == DT_DIR) {
+                    std::string subdir = dir + fname + "/";
+                    if (FindLostInode(ino, subdir, newname)) {
+                        closedir(dirptr);
+                        return true;
+                    }
+                }
+            }
+            closedir(dirptr);
+        }
+    }
+    return false;
+}
+bool LogStream::FindLostInode(uint64_t ino, const std::string& dir, std::string* newname) {
+    newname->clear();
+
+    // list dir
+    DIR* dirptr = NULL;
+    struct dirent* entry = NULL;
+    if ((dirptr = opendir(dir.c_str())) != NULL) {
+        while ((entry = readdir(dirptr)) != NULL) {
+            // find filename match ino
+            uint64_t tmp_ino = (uint64_t)entry->d_ino;
+            if (tmp_ino == ino) {
+                std::string fname(entry->d_name);
+                *newname = dir + fname;
+                closedir(dirptr);
+                return true;
+            }
+        }
+        closedir(dirptr);
+    }
+    return false;
 }
 
 // split string by substring
@@ -1096,6 +1294,13 @@ int LogStream::AsyncPushMonitor(const std::string& table_name, const std::vector
                            &mdt::LogSchedulerService::LogSchedulerService_Stub::RpcMonitorStream,
                            req, resp, callback);
     return 0;
+}
+
+int LogStream::AddCtrlEvent(uint64_t event_id) {
+    pthread_spin_lock(&lock_);
+    ctrl_event_.insert(std::pair<uint64_t, uint64_t>(event_id, 0));
+    pthread_spin_unlock(&lock_);
+    thread_event_.Set();
 }
 
 int LogStream::AddWriteEvent(std::string filename) {
