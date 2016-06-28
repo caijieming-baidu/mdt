@@ -1638,6 +1638,7 @@ int main(int ac, char* av[]) {
                 }
             }
             GetByTimeOp(non_interactive_cmd_vec);
+            exit(0);
         } else if (FLAGS_cmd == "CreateTable") {
             //printf("cmd: CreateTable <dbname> <tablename> <primary_key_type> <table_ttl> "
             //    "[<index_table> <index_type=kBytes,kUInt64>]\n\n");

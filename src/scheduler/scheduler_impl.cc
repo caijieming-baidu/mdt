@@ -41,6 +41,7 @@ DECLARE_int64(scheduler_mail_delay);
 // leveldb
 DECLARE_int64(cache_size);
 DECLARE_string(db_dir);
+DECLARE_bool(scheduler_use_qps_schedule);
 
 namespace mdt {
 namespace scheduler {
@@ -345,6 +346,7 @@ void SchedulerImpl::DoUpdateAgentInfo(::google::protobuf::RpcController* control
 
 void SchedulerImpl::SelectAndUpdateCollector(AgentInfo info, std::string* select_server_addr) {
     int64_t min_nr_agent = INT64_MAX;
+    int64_t min_qps = INT64_MAX;
     VLOG(50) << "current agent's collector addr " << info.collector_addr << ", error_nr " << info.error_nr;
     *select_server_addr = info.collector_addr;
 
@@ -378,16 +380,31 @@ void SchedulerImpl::SelectAndUpdateCollector(AgentInfo info, std::string* select
         if ((collector_info.state == COLLECTOR_ACTIVE) &&
                 ((collector_info.ctime + FLAGS_collector_timeout < ts) ||
                  (collector_info.error_nr <= FLAGS_collector_max_error))) {
-            if (min_nr_agent > collector_info.nr_agents) {
-                min_nr_agent = collector_info.nr_agents;
-                min_it = collector_it;
-                *select_server_addr = collector_it->first;
+            if (FLAGS_scheduler_use_qps_schedule) {
+                if (min_qps > collector_info.qps) {
+                    min_qps = collector_info.qps;
+                    min_it = collector_it;
+                    *select_server_addr = collector_it->first;
+                }
+            } else {
+                if (min_nr_agent > collector_info.nr_agents) {
+                    min_nr_agent = collector_info.nr_agents;
+                    min_it = collector_it;
+                    *select_server_addr = collector_it->first;
+                }
             }
         }
     }
-    if (min_nr_agent != INT64_MAX) {
-        CollectorInfo& min_info = min_it->second;
-        min_info.nr_agents++;
+    if (FLAGS_scheduler_use_qps_schedule) {
+        if (min_qps != INT64_MAX) {
+            CollectorInfo& min_info = min_it->second;
+            min_info.nr_agents++;
+        }
+    } else {
+        if (min_nr_agent != INT64_MAX) {
+            CollectorInfo& min_info = min_it->second;
+            min_info.nr_agents++;
+        }
     }
     pthread_spin_unlock(&collector_lock_);
 }

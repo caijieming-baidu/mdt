@@ -46,13 +46,14 @@ DEFINE_int32(agent_qps_quota, 10000, "max qps agent can be use per second");
 DEFINE_int32(agent_bandwidth_quota, 20000000, "max bandwidth agent can be use per second");
 
 DEFINE_int32(collector_timeout, 8000000, "collector info will be delete after x us");
-DEFINE_int32(collector_max_error, 1, "max error can occur in collector");
+DEFINE_int32(collector_max_error, 10000, "max error can occur in collector");
 
 DEFINE_int64(scheduler_galaxy_app_trace_period, 300000, "in (ms) update task trace path info");
 DEFINE_int64(scheduler_mail_max_queue_size, 30, "max mail queue size");
 DEFINE_int64(scheduler_mail_delay, 5000, "delay (ms) time in send mail");
 
 DEFINE_int64(cache_size, 104857600, "leveldb block cache size");
+DEFINE_bool(scheduler_use_qps_schedule, true, "scheduler use qps for alloc collector");
 
 ///////////////////////////////////////////
 // scheduler flags
