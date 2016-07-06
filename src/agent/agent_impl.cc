@@ -1,27 +1,34 @@
+// Copyright (c) 2015, Baidu.com, Inc. All Rights Reserved
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "agent/agent_impl.h"
+
+#include <dirent.h>
+#include <errno.h>
+#include <sys/inotify.h>
+#include <sys/select.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#include <iostream>
+#include <map>
+#include <string>
+
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/split.hpp>
-#include <map>
-#include <iostream>
-#include <string>
 #include <glog/logging.h>
 #include <sofa/pbrpc/pbrpc.h>
-#include <sys/inotify.h>
-#include <unistd.h>
-#include "agent/agent_impl.h"
-#include "agent/options.h"
-#include "proto/agent.pb.h"
-#include "agent/log_stream.h"
-#include <errno.h>
-#include <sys/select.h>
-#include "proto/scheduler.pb.h"
-#include <dirent.h>
-#include <sys/types.h>
 
+#include "agent/log_stream.h"
+#include "agent/options.h"
+#include "db/db_impl.h"
+#include "helpers/memenv/memenv.h"
 #include "leveldb/db.h"
 #include "leveldb/options.h"
 #include "leveldb/slice.h"
-#include "db/db_impl.h"
-#include "helpers/memenv/memenv.h"
+#include "proto/agent.pb.h"
+#include "proto/scheduler.pb.h"
 
 DECLARE_string(scheduler_addr);
 DECLARE_string(db_dir);

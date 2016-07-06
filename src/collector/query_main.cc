@@ -1,9 +1,15 @@
+// Copyright (c) 2015, Baidu.com, Inc. All Rights Reserved
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #include <iostream>
+
 #include <gflags/gflags.h>
-#include "collector/query_service.h"
-#include <sofa/pbrpc/pbrpc.h>
-#include "utils/status.h"
 #include <glog/logging.h>
+#include <sofa/pbrpc/pbrpc.h>
+
+#include "collector/query_service.h"
+#include "utils/status.h"
 
 DECLARE_string(se_service_port);
 DECLARE_string(flagfile);

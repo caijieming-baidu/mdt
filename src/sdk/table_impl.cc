@@ -41,6 +41,7 @@ DECLARE_bool(enable_data_compress);
 DECLARE_bool(enable_async_index_write);
 DECLARE_int64(async_tera_writer_num);
 DECLARE_bool(ignore_tera_write_error);
+DECLARE_bool(sdk_disable_tera_ts_write);
 
 namespace mdt {
 static ThreadPool GLOBAL_read_row_data_threads(FLAGS_read_file_thread_num);
@@ -994,16 +995,21 @@ int TableImpl::WriteBatchIndexTable(const std::string& primary_key, uint64_t tim
     }
     delete iter;
 
-    // write timestamp table
-    tera::Table* ts_table = GetTimestampTable();
-    VLOG(12) << " write ts table: " << std::hex << ts_table << ", timestamp: "<< timestamp
-             << ", ts string: " << DebugString(ts_key);
-    tera::RowMutation* ts_row = ts_table->NewRowMutation(ts_key);
-    context->row_table_map[((uint64_t)(ts_row))] = (uint64_t)BatchWriteContext_ts_table;
-    ts_row->Put(kIndexTableColumnFamily, type_primary_key, timestamp, null_value);
-    ts_row->SetContext(context);
-    ts_row->SetCallBack(BatchIndexCallback);
-    ts_table->ApplyMutation(ts_row);
+    if (FLAGS_sdk_disable_tera_ts_write) {
+        // disable write ts table, for seq write throughout
+        context->Release();
+    } else {
+        // write timestamp table
+        tera::Table* ts_table = GetTimestampTable();
+        VLOG(12) << " write ts table: " << std::hex << ts_table << ", timestamp: "<< timestamp
+            << ", ts string: " << DebugString(ts_key);
+        tera::RowMutation* ts_row = ts_table->NewRowMutation(ts_key);
+        context->row_table_map[((uint64_t)(ts_row))] = (uint64_t)BatchWriteContext_ts_table;
+        ts_row->Put(kIndexTableColumnFamily, type_primary_key, timestamp, null_value);
+        ts_row->SetContext(context);
+        ts_row->SetCallBack(BatchIndexCallback);
+        ts_table->ApplyMutation(ts_row);
+    }
 
     return 0;
 

@@ -1,10 +1,16 @@
-#include "scheduler/scheduler_impl.h"
+// Copyright (c) 2015, Baidu.com, Inc. All Rights Reserved
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #include <iostream>
-#include <sofa/pbrpc/pbrpc.h>
+
+#include <galaxy.h>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
+#include <sofa/pbrpc/pbrpc.h>
 #include <tera.h>
-#include <galaxy.h>
+
+#include "scheduler/scheduler_impl.h"
 
 DECLARE_string(scheduler_service_port);
 DECLARE_string(log_dir);

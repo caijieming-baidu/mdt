@@ -1,23 +1,29 @@
-#include <gflags/gflags.h>
-#include "collector/query_service.h"
-#include <boost/bind.hpp>
-#include <glog/logging.h>
-#include "proto/scheduler.pb.h"
+// Copyright (c) 2015, Baidu.com, Inc. All Rights Reserved
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #include <iostream>
-#include <boost/algorithm/string/split.hpp>
+
 #include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/split.hpp>
+#include <boost/bind.hpp>
+#include <gflags/gflags.h>
+#include <glog/logging.h>
+
+#include "collector/query_service.h"
+#include "proto/scheduler.pb.h"
 #include "utils/counter.h"
 #include "utils/timer.h"
 
-DECLARE_int32(se_num_threads);
 DECLARE_bool(mdt_flagfile_set);
-DECLARE_string(mdt_flagfile);
-DECLARE_string(flagfile);
-DECLARE_string(scheduler_addr);
-DECLARE_string(se_service_port);
+DECLARE_int32(se_num_threads);
+DECLARE_int64(collector_ktera_pending_count);
 DECLARE_int64(collector_store_max_pending);
 DECLARE_int64(collector_tera_max_pending);
-DECLARE_int64(collector_ktera_pending_count);
+DECLARE_string(flagfile);
+DECLARE_string(mdt_flagfile);
+DECLARE_string(scheduler_addr);
+DECLARE_string(se_service_port);
 
 namespace mdt {
 

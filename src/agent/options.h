@@ -1,8 +1,13 @@
+// Copyright (c) 2015, Baidu.com, Inc. All Rights Reserved
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #ifndef AGENT_OPTIONS_H_
 #define AGENT_OPTIONS_H_
 
-#include <string>
 #include <iostream>
+#include <string>
+
 #include "leveldb/db.h"
 #include "utils/counter.h"
 

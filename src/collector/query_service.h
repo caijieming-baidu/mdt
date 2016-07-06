@@ -1,18 +1,24 @@
+// Copyright (c) 2015, Baidu.com, Inc. All Rights Reserved
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #ifndef MDT_COLLECTOR_SEARCH_ENGINE_H_
 #define MDT_COLLECTOR_SEARCH_ENGINE_H_
 
 #include <map>
-#include "sdk/table.h"
-#include "sdk/db.h"
-#include "utils/status.h"
-#include "utils/event.h"
-#include "utils/thread_pool.h"
-#include "utils/mutex.h"
-#include "utils/counter.h"
-#include "proto/query.pb.h"
+
 #include <google/protobuf/service.h>
+
+#include "proto/query.pb.h"
 #include "proto/scheduler.pb.h"
 #include "rpc/rpc_client.h"
+#include "sdk/db.h"
+#include "sdk/table.h"
+#include "utils/counter.h"
+#include "utils/event.h"
+#include "utils/mutex.h"
+#include "utils/status.h"
+#include "utils/thread_pool.h"
 
 namespace mdt {
 

@@ -1,3 +1,7 @@
+// Copyright (c) 2015, Baidu.com, Inc. All Rights Reserved
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #include <gflags/gflags.h>
 
 // nfs cluster location
@@ -25,6 +29,7 @@ DEFINE_bool(enable_data_compress, true, "use snappy to compress data in filesyst
 DEFINE_bool(enable_async_index_write, true, "write data and async write index");
 DEFINE_int64(async_tera_writer_num, 20, "num of async index writer");
 DEFINE_bool(ignore_tera_write_error, false, "ignore tera write error");
+DEFINE_bool(sdk_disable_tera_ts_write, false, "disable tera timestamp write");
 
 // read ops param
 DEFINE_int64(read_file_thread_num, 50,  "num of read file threads");

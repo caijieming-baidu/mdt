@@ -1,30 +1,36 @@
-#include "scheduler/scheduler_impl.h"
-#include <glog/logging.h>
-#include <gflags/gflags.h>
-#include <iostream>
-#include "utils/timer.h"
-#include <boost/function.hpp>
-#include <boost/bind.hpp>
-#include "proto/agent.pb.h"
+// Copyright (c) 2015, Baidu.com, Inc. All Rights Reserved
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
-#include "mail/mail.h"
-#include "leveldb/db.h"
-#include "leveldb/slice.h"
-#include "leveldb/cache.h"
-#include "leveldb/status.h"
-#include <boost/shared_ptr.hpp>
-#include <boost/algorithm/string/split.hpp>
-#include <boost/algorithm/string/classification.hpp>
-#include <galaxy.h>
-#include "proto/galaxy_galaxy.pb.h"
+#include "scheduler/scheduler_impl.h"
+
+#include <arpa/inet.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <stdio.h>
-#include <sys/socket.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+#include <sys/socket.h>
 
+#include <iostream>
+
+#include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/split.hpp>
+#include <boost/bind.hpp>
+#include <boost/function.hpp>
+#include <boost/shared_ptr.hpp>
+#include <galaxy.h>
+#include <gflags/gflags.h>
+#include <glog/logging.h>
+
+#include "leveldb/cache.h"
+#include "leveldb/db.h"
+#include "leveldb/slice.h"
+#include "leveldb/status.h"
+#include "mail/mail.h"
+#include "proto/agent.pb.h"
+#include "proto/galaxy_galaxy.pb.h"
+#include "utils/timer.h"
 
 DECLARE_string(scheduler_service_port);
 DECLARE_int32(agent_timeout);

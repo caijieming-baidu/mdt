@@ -1,30 +1,35 @@
+// Copyright (c) 2015, Baidu.com, Inc. All Rights Reserved
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "agent/log_stream.h"
+
+#include <dirent.h>
+#include <errno.h>
+#include <pthread.h>
+#include <sys/time.h>
+
+#include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/split.hpp>
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/json_parser.hpp>
+#include <boost/algorithm/string/split.hpp>
 #include <boost/foreach.hpp>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
 #include <boost/regex.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
-
-#include "proto/scheduler.pb.h"
-#include "agent/log_stream.h"
-#include <glog/logging.h>
 #include <gflags/gflags.h>
-#include <pthread.h>
-#include "agent/log_stream.h"
-#include "agent/options.h"
-#include <boost/algorithm/string/split.hpp>
-#include <boost/algorithm/string/classification.hpp>
-#include "utils/coding.h"
-#include <sys/time.h>
-#include <dirent.h>
+#include <glog/logging.h>
 
-#include "leveldb/slice.h"
+#include "agent/options.h"
 #include "leveldb/db.h"
+#include "leveldb/slice.h"
 #include "leveldb/status.h"
 #include "proto/query.pb.h"
+#include "proto/scheduler.pb.h"
+#include "utils/coding.h"
 
 DECLARE_string(agent_service_port);
 DECLARE_string(scheduler_addr);
@@ -1893,7 +1898,8 @@ int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
         if (res < 0) {
             if (kLastLogWarningTime + 60000000 < timer::get_micros()) {
                 kLastLogWarningTime = timer::get_micros();
-                LOG(WARNING) << "redo cp, read file error, offset " << offset << ", size " << size << ", res " << res;
+                LOG(WARNING) << "redo cp, read file error " << filename_ << ", ino " << ino_ << ", offset " << offset
+                    << ", size " << size << ", res " << res << ", errno " << errno;
             }
             kfile_read_fail.Inc();
             ret = -1;
@@ -1929,6 +1935,14 @@ int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
     }
 
     if (fd_ < 0) {
+        if (kLastLogWarningTime + 60000000 < timer::get_micros()) {
+            kLastLogWarningTime = timer::get_micros();
+            LOG(WARNING) << "file error, " << filename_ << ", ino " << ino_;
+        }
+        kfile_read_fail.Inc();
+        ret = -1;
+        return ret;
+
         // file error, try to re-open it
         struct stat stat_buf;
         if (lstat(filename_.c_str(), &stat_buf) >= 0) {

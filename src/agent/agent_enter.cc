@@ -1,10 +1,16 @@
-#include "agent/agent_impl.h"
-#include <gflags/gflags.h>
-#include <unistd.h>
-#include <sofa/pbrpc/pbrpc.h>
-#include <glog/logging.h>
-#include <tera.h>
+// Copyright (c) 2015, Baidu.com, Inc. All Rights Reserved
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #include <assert.h>
+#include <unistd.h>
+
+#include <gflags/gflags.h>
+#include <glog/logging.h>
+#include <sofa/pbrpc/pbrpc.h>
+#include <tera.h>
+
+#include "agent/agent_impl.h"
 
 DECLARE_string(agent_service_port);
 DECLARE_string(log_dir);

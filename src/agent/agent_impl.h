@@ -1,17 +1,24 @@
+// Copyright (c) 2015, Baidu.com, Inc. All Rights Reserved
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #ifndef AGENT_AGENT_IMPL_H_
 #define AGENT_AGENT_IMPL_H_
 
+#include <pthread.h>
+#include <stdio.h>
+#include <sys/inotify.h>
+#include <unistd.h>
+
 #include <iostream>
 #include <map>
-#include <pthread.h>
-#include <unistd.h>
-#include <sys/inotify.h>
+
 #include <sofa/pbrpc/pbrpc.h>
+
+#include "agent/log_stream.h"
 #include "proto/agent.pb.h"
 #include "proto/scheduler.pb.h"
-#include "agent/log_stream.h"
 #include "utils/event.h"
-#include <stdio.h>
 
 namespace mdt {
 namespace agent {

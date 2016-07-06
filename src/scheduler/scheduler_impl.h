@@ -1,19 +1,26 @@
+// Copyright (c) 2015, Baidu.com, Inc. All Rights Reserved
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #ifndef SCHEDULER_SCHEDULER_IMPL_H_
 #define SCHEDULER_SCHEDULER_IMPL_H_
 
-#include <google/protobuf/service.h>
 #include <pthread.h>
+
 #include <map>
-#include <sofa/pbrpc/pbrpc.h>
-#include "proto/scheduler.pb.h"
-#include "utils/thread_pool.h"
-#include "utils/counter.h"
-#include "rpc/rpc_client.h"
-#include "mail/mail.h"
-#include "leveldb/db.h"
-#include "proto/agent.pb.h"
+
 #include <boost/shared_ptr.hpp>
 #include <galaxy.h>
+#include <google/protobuf/service.h>
+#include <sofa/pbrpc/pbrpc.h>
+
+#include "leveldb/db.h"
+#include "mail/mail.h"
+#include "proto/agent.pb.h"
+#include "proto/scheduler.pb.h"
+#include "rpc/rpc_client.h"
+#include "utils/counter.h"
+#include "utils/thread_pool.h"
 
 namespace mdt {
 namespace scheduler {
