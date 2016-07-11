@@ -1,36 +1,44 @@
-#include <boost/algorithm/string/classification.hpp>
-#include <boost/algorithm/string/split.hpp>
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/json_parser.hpp>
-#include <boost/foreach.hpp>
-#include <boost/regex.hpp>
-#include <boost/lexical_cast.hpp>
+// Copyright (c) 2015, Baidu.com, Inc. All Rights Reserved
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include <fcntl.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <readline/readline.h>
 #include <readline/history.h>
-#include <iostream>
-#include <vector>
+#include <readline/readline.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 #include <unistd.h>
-#include <sys/time.h>
 
+#include <iostream>
+#include <vector>
+
+#include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/split.hpp>
+#include <boost/foreach.hpp>
+#include <boost/lexical_cast.hpp>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
+#include <boost/regex.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <tera.h>
 
-#include "sdk/sdk.h"
-#include "sdk/db.h"
-#include "sdk/table.h"
-#include "utils/env.h"
-#include "utils/coding.h"
-#include "rpc/rpc_client.h"
+#include "leveldb/db.h"
+#include "leveldb/slice.h"
+#include "leveldb/status.h"
+#include "proto/galaxy_log.pb.h"
 #include "proto/kv.pb.h"
 #include "proto/scheduler.pb.h"
-#include "proto/galaxy_log.pb.h"
+#include "rpc/rpc_client.h"
+#include "sdk/db.h"
+#include "sdk/sdk.h"
+#include "sdk/table.h"
+#include "utils/coding.h"
+#include "utils/env.h"
 
 DEFINE_string(tool_mode, "", "mdt-tool cmd mode, --tool_mode=i for interactive");
 DEFINE_string(cmd, "", "non interactive mode's cmd");
@@ -114,7 +122,39 @@ void HelpManue() {
     printf("cmd: GalaxyShow <dbname> <tablename> start(year-month-day-hour:min:sec) end(year-month-day-hour:min:sec) <limit> [index cmp value]\n\n");
     printf("cmd: PushTraceLog <job_name> <work_dir> <user_log_dir> <db_name> <table_name> <parse_path_fn> <nexus_root_path> <master_path> <nexus_servers> \n\n");
     printf("cmd: SetMonitor <conf>\n\n");
+    printf("cmd: LeveldbDump Magic/CurrentOffset/CheckPoint\n\n");
     printf("===========================\n");
+}
+
+/*
+ *      leveldb's data: MagicYoYo1989, CurrentOffset, checkpoint
+ *      MagicYoYo1989=db+ino, path
+ *      CurrentOffset=db+ino, offset
+ *      CheckPoint=db+ino+offset, size
+ */
+int LeveldbDumpOp(std::vector<std::string>& cmd_vec) {
+    // parse param
+    std::string lpath = cmd_vec[1];
+    std::string db_name = cmd_vec[2];
+    std::string table_name = cmd_vec[3];
+
+    leveldb::DB* db;
+    leveldb::Options options;
+    leveldb::Status status = leveldb::DB::Open(options, lpath.c_str(), &db);
+
+    if (db_name == "Magic") {
+        // search MagicYoYo(pri) table
+
+    } else if (db_name == "CurrentOffset") {
+        // search current offset table
+
+    } else if (db_name == "CheckPoint") {
+        // search checkpoint table
+
+    } else {
+        return -1;
+    }
+    return 0;
 }
 
 int GetClientAndTableList(const std::string& db_name,

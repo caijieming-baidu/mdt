@@ -5,19 +5,21 @@
 #ifndef AGENT_LOG_STREAM_H_
 #define AGENT_LOG_STREAM_H_
 
+#include <sys/time.h>
+
 #include <iostream>
 #include <map>
 #include <queue>
 #include <vector>
-#include "leveldb/db.h"
+
 #include "agent/options.h"
-#include "proto/query.pb.h"
+#include "leveldb/db.h"
 #include "proto/agent.pb.h"
+#include "proto/query.pb.h"
 #include "proto/scheduler.pb.h"
 #include "rpc/rpc_client.h"
-#include <sys/time.h>
-#include "utils/event.h"
 #include "utils/counter.h"
+#include "utils/event.h"
 #include "utils/thread_pool.h"
 
 namespace mdt {
@@ -180,6 +182,29 @@ private:
     bool CheckRegex(const std::string& line, const mdt::LogAgentService::Rule& rule);
     bool CheckRecord(const std::string& key, const mdt::LogAgentService::Record& record);
 
+
+    void MakeCurrentOffsetKey(const std::string& module_name,
+                              const std::string& filename,
+                              uint64_t ino,
+                              uint64_t offset,
+                              std::string* key,
+                              std::string* value);
+    void MakeKeyValue(const std::string& module_name,
+                      const std::string& filename,
+                      uint64_t ino,
+                      uint64_t offset,
+                      std::string* key,
+                      uint64_t size,
+                      std::string* value);
+    void ParseKeyValue(const leveldb::Slice& key,
+                       const leveldb::Slice& value,
+                       uint64_t* ino,
+                       uint64_t* offset, uint64_t* size);
+    void ReclaimOrphanInode(const std::string& db_name);
+    bool InodeToFileName(uint64_t ino, const std::string& filename, std::string* newname);
+    bool FindLostInode(uint64_t ino, const std::string& dir, std::string* newname);
+    int AddCtrlEvent(uint64_t event_id);
+
 public:
     Counter kseq_send_num;
     Counter kseq_nonsend_num;
@@ -187,6 +212,7 @@ public:
     Counter kseq_send_fail;
     Counter kindex_filter_num;
     Counter kkeyword_filter_num;
+    Counter kfile_miss_num;
 
 private:
     std::string hostname_;
@@ -242,10 +268,12 @@ private:
     std::map<uint64_t, std::string> write_event_; // [inode, filename]
     std::queue<DBKey*> key_queue_;
     std::queue<DBKey*> failed_key_queue_;
+    std::map<uint64_t, uint64_t> ctrl_event_;
     ThreadPool fail_delay_thread_;
 
     // collector info
     int64_t last_update_time_;
+    int64_t last_ino_check_ts_;
 
     // monitor relatively
     pthread_spinlock_t monitor_lock_;

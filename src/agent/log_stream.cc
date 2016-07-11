@@ -57,9 +57,17 @@ DECLARE_int64(delay_retry_time);
 DECLARE_int64(agent_max_fd_num);
 
 DECLARE_bool(use_regex_index_pattern);
+DECLARE_bool(enable_reclaim_ino);
 
 namespace mdt {
 namespace agent {
+
+/*
+ *      leveldb's data: MagicYoYo1989, CurrentOffset, checkpoint
+ *      MagicYoYo1989=db+ino, path
+ *      CurrentOffset=db+ino, offset
+ *      CheckPoint=db+ino+offset, size
+ */
 
 static int64_t kLastLogWarningTime;
 
@@ -169,6 +177,7 @@ LogStream::LogStream(std::string module_name, LogOptions log_options,
     user_time_ = FLAGS_user_time;
     time_type_ = FLAGS_time_type;
 
+    last_ino_check_ts_ = mdt::timer::get_micros();
     last_update_time_ = mdt::timer::get_micros();
     pthread_create(&tid_, NULL, LogStreamWrapper, this);
 
@@ -324,6 +333,7 @@ void LogStream::Run() {
         std::map<uint64_t, std::string> local_delete_event;
         std::queue<DBKey*> local_key_queue;
         std::queue<DBKey*> local_failed_key_queue;
+        std::map<uint64_t, uint64_t> local_ctrl_event;
 
         pthread_spin_lock(&lock_);
         VLOG(30) << "event: write " << write_event_.size() << ", delete " << delete_event_.size()
@@ -342,6 +352,10 @@ void LogStream::Run() {
         }
         if (failed_key_queue_.size()) {
             swap(failed_key_queue_, local_failed_key_queue);
+            has_event = true;
+        }
+        if (ctrl_event_.size()) {
+            swap(ctrl_event_, local_ctrl_event);
             has_event = true;
         }
         pthread_spin_unlock(&lock_);
@@ -476,6 +490,7 @@ void LogStream::Run() {
                 file_stream = new FileStream(module_name_, log_options_, filename, ino, &success);
                 if (success < 0) {
                     // TODO: log has been delete before it can be collector, :(-
+                    kfile_miss_num.Inc();
                     LOG(WARNING) << "new file stream " << file_stream->GetFileName() << ", faile, ino " << ino;
                 }
                 file_streams_[ino] = file_stream;
@@ -508,6 +523,7 @@ void LogStream::Run() {
             } else if (file_read_res == -1) {
                 // file error, give it
                 LOG(WARNING) << "Missfile=" << file_stream->GetFileName() << " MissInode=" << ino;
+                kfile_miss_num.Inc();
                 DeleteWatchEvent(filename, ino, false);
             } else if (file_read_res == -2) {
                 // delay retry
@@ -616,6 +632,9 @@ void LogStream::Run() {
 
             key1 = module_name_ + "." + hostname_ + "." + "kkeyword_filter_num";
             log_options_.counter_map->Add(key1, kkeyword_filter_num.Clear());
+
+            key1 = module_name_ + "." + hostname_ + "." + "kfile_miss_num";
+            log_options_.counter_map->Add(key1, kfile_miss_num.Clear());
         }
 
         pthread_spin_lock(server_addr_lock_);
@@ -833,6 +852,9 @@ int LogStream::ParseMdtRequest(const std::string table_name,
                                std::vector<std::string>& line_vec,
                                std::vector<mdt::SearchEngine::RpcStoreRequest* >* req_vec,
                                std::vector<std::string>* monitor_vec) {
+    if (table_name == "" || table_name == "trash") {
+        return 0;
+    }
     for (uint32_t i = 0; i < line_vec.size(); i++) {
         int res = 0;
         std::string& line  = line_vec[i];
@@ -1100,6 +1122,14 @@ int LogStream::AsyncPushMonitor(const std::string& table_name, const std::vector
     rpc_client_->AsyncCall(service,
                            &mdt::LogSchedulerService::LogSchedulerService_Stub::RpcMonitorStream,
                            req, resp, callback);
+    return 0;
+}
+
+int LogStream::AddCtrlEvent(uint64_t event_id) {
+    pthread_spin_lock(&lock_);
+    ctrl_event_.insert(std::pair<uint64_t, uint64_t>(event_id, 0));
+    pthread_spin_unlock(&lock_);
+    thread_event_.Set();
     return 0;
 }
 

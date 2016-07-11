@@ -639,18 +639,19 @@ void SchedulerImpl::DoRpcTraceGalaxyApp(boost::shared_ptr<TraceInfo> trace_info)
     }
 
     std::vector<::baidu::galaxy::PodInformation> pods;
-    //if (!trace_info->galaxy->GetPodsByName(trace_info->job_name, &pods)) {
-    if (!trace_info->galaxy->ShowPod(trace_info->job_id, &pods)) {
-        LOG(WARNING) << "galaxy get Pods error, " << trace_info->job_name;
-        if (trace_info->flag == ENABLE_TRACE) {
-            ThreadPool::Task task = boost::bind(&SchedulerImpl::DoRpcTraceGalaxyApp, this, trace_info);
-            galaxy_trace_pool_.DelayTask(FLAGS_scheduler_galaxy_app_trace_period, task);
-        } else {
-            pthread_spin_lock(&galaxy_trace_lock_);
-            galaxy_trace_rule_.erase(trace_info->job_name);
-            pthread_spin_unlock(&galaxy_trace_lock_);
+    if (!trace_info->galaxy->GetPodsByName(trace_info->job_name, &pods)) {
+        if (!trace_info->galaxy->ShowPod(trace_info->job_id, &pods)) {
+            LOG(WARNING) << "galaxy get Pods error, " << trace_info->job_name;
+            if (trace_info->flag == ENABLE_TRACE) {
+                ThreadPool::Task task = boost::bind(&SchedulerImpl::DoRpcTraceGalaxyApp, this, trace_info);
+                galaxy_trace_pool_.DelayTask(FLAGS_scheduler_galaxy_app_trace_period, task);
+            } else {
+                pthread_spin_lock(&galaxy_trace_lock_);
+                galaxy_trace_rule_.erase(trace_info->job_name);
+                pthread_spin_unlock(&galaxy_trace_lock_);
+            }
+            return;
         }
-        return;
     }
 
     trace_info->ref.Inc();
@@ -738,6 +739,10 @@ void SchedulerImpl::RpcTraceGalaxyApp(::google::protobuf::RpcController* control
         trace_info->job_id = request->job_id();
         galaxy_trace_rule_[request->job_name()] = trace_info;
         need_queue_task = true;
+    } else {
+        (galaxy_trace_rule_[request->job_name()])->configure.CopyFrom(*request);
+        (galaxy_trace_rule_[request->job_name()])->job_name = request->job_name();
+        (galaxy_trace_rule_[request->job_name()])->job_id = request->job_id();
     }
     pthread_spin_unlock(&galaxy_trace_lock_);
 
