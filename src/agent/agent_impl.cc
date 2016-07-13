@@ -305,7 +305,7 @@ int AgentImpl::FreadEvent(void* dest, size_t size, FILE* file) {
 
 void AgentImpl::WatchLogDir(FileSystemInotify* fs_inotify) {
     while (1) {
-        VLOG(35) << "step into watch dir phase, dir " << fs_inotify->log_dir;
+        VLOG(40) << "step into watch dir phase, dir " << fs_inotify->log_dir;
         if (fs_inotify->stop) {
             break;
         }
@@ -344,9 +344,12 @@ void AgentImpl::WatchLogDir(FileSystemInotify* fs_inotify) {
         */
         for (uint32_t i = 0; i < 21; ++i) {
             if (event.mask & event_masks[i].flag) {
-                VLOG(30) << "file " << filename << " has event: " << event_masks[i].name;
+                if (strcmp(event_masks[i].name, "IN_MODIFY") != 0) {
+                    VLOG(30) << "file " << filename << " has event: " << event_masks[i].name;
+                }
             }
         }
+        // filesystem has queue event in order
         // parse event
         //if (event.mask & (IN_CREATE | IN_MOVED_TO)) {
         if (0) {
@@ -355,7 +358,7 @@ void AgentImpl::WatchLogDir(FileSystemInotify* fs_inotify) {
         //} else if (event.mask & (IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF| IN_MOVED_FROM)) {
         } else if (event.mask & (IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF | IN_CLOSE_WRITE | IN_MOVED_TO)) {
             DeleteWatchEvent(fs_inotify->log_dir, filename, &event);
-        } else if (event.mask & (IN_MODIFY)) {
+        } else if (event.mask & (IN_MODIFY | IN_CREATE)) {
             AddWriteEvent(fs_inotify->log_dir, filename, &event);
         } else {
             // ignore create move_from
@@ -404,9 +407,9 @@ int AgentImpl::AddWriteEvent(const std::string& logdir, const std::string& filen
     std::string module_name;
     //ParseModuleName(filename, &module_name);
     FilterFileByMoudle(filename, &module_name);
-    VLOG(35) << "write event, module name " << module_name << ", log dir " << logdir;
+    VLOG(40) << "write event, module name " << module_name << ", log dir " << logdir;
     if (module_name.size() == 0) {
-        VLOG(35) << "dir " << filename << ", no module match";
+        VLOG(40) << "dir " << filename << ", no module match";
         return -1;
     }
 
@@ -655,7 +658,7 @@ void AgentImpl::RpcAddWatchPath(::google::protobuf::RpcController* controller,
                                 ::google::protobuf::Closure* done) {
     if (AddWatchPath(request->watch_path()) < 0) {
         response->set_status(mdt::LogAgentService::kRpcError);
-        LOG(WARNING) << "add watch event in dir " << request->watch_path() << " failed";
+        //LOG(WARNING) << "add watch event in dir " << request->watch_path() << " failed";
     } else {
         response->set_status(mdt::LogAgentService::kRpcOk);
     }

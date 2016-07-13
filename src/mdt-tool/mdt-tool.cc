@@ -60,6 +60,7 @@ DEFINE_string(mdttool_flagfile, "../conf/trace.flag", "mdt-tool flagfile");
 DECLARE_string(scheduler_addr);
 DECLARE_string(agent_service_port);
 
+DEFINE_string(cmd_lpath, "", "leveldb path name");
 DEFINE_string(cmd_db_name, "", "db name");
 DEFINE_string(cmd_table_name, "", "table name");
 DEFINE_string(cmd_primary_key, "", "primary_key");
@@ -122,7 +123,7 @@ void HelpManue() {
     printf("cmd: GalaxyShow <dbname> <tablename> start(year-month-day-hour:min:sec) end(year-month-day-hour:min:sec) <limit> [index cmp value]\n\n");
     printf("cmd: PushTraceLog <job_name> <work_dir> <user_log_dir> <db_name> <table_name> <parse_path_fn> <nexus_root_path> <master_path> <nexus_servers> \n\n");
     printf("cmd: SetMonitor <conf>\n\n");
-    printf("cmd: LeveldbDump Magic/CurrentOffset/CheckPoint\n\n");
+    printf("cmd: LeveldbDump lpath Magic/CurrentOffset/CheckPoint/Content db_name\n\n");
     printf("===========================\n");
 }
 
@@ -130,13 +131,95 @@ void HelpManue() {
  *      leveldb's data: MagicYoYo1989, CurrentOffset, checkpoint
  *      MagicYoYo1989=db+ino, path
  *      CurrentOffset=db+ino, offset
+ *      Content=db+ino, offset+size+content
  *      CheckPoint=db+ino+offset, size
  */
+void EncodeUint64BigEndian(uint64_t value, std::string* str) {
+    char offset_buf[8];
+    ::mdt::EncodeBigEndian(offset_buf, value);
+    std::string offset_str(offset_buf, 8);
+    *str = offset_str;
+}
+void MakeKeyValue(const std::string& module_name,
+                  const std::string& filename,
+                  uint64_t ino,
+                  uint64_t offset,
+                  std::string* key,
+                  uint64_t size,
+                  std::string* value) {
+    *key = "CheckPoint";
+    key->push_back('\0');
+    *key += module_name;
+    key->push_back('\0');
+    std::string ino_str;
+    EncodeUint64BigEndian(ino, &ino_str);
+    *key += ino_str;
+
+    std::string offset_str;
+    EncodeUint64BigEndian(offset, &offset_str);
+    *key += offset_str;
+
+    if (value) {
+        EncodeUint64BigEndian(size, value);
+    }
+    return;
+}
+void ParseKeyValue(const leveldb::Slice& key,
+                   const leveldb::Slice& value,
+                   uint64_t* ino,
+                   uint64_t* offset, uint64_t* size) {
+    int prefixlen = strlen(key.data());
+    leveldb::Slice db_slice(key.data() + prefixlen + 1, key.size() - prefixlen - 1);
+
+    int mlen = strlen(db_slice.data());
+    leveldb::Slice ino_str = leveldb::Slice(db_slice.data() + mlen + 1, 8);
+    *ino = ::mdt::DecodeBigEndain(ino_str.data());
+
+    leveldb::Slice offset_str = leveldb::Slice(db_slice.data() + mlen + 1 + 8, 8);
+    *offset = ::mdt::DecodeBigEndain(offset_str.data());
+
+    *size = ::mdt::DecodeBigEndain(value.data());
+}
+void ToolMakeContextKey(const std::string& db_name, uint64_t ino, std::string* key,
+                        uint64_t offset, uint64_t size, char* buf, std::string* val) {
+    *key = "ContentKey";
+    key->push_back('\0');
+    *key += db_name;
+    key->push_back('\0');
+    std::string ino_str;
+    EncodeUint64BigEndian(ino, &ino_str);
+    *key += ino_str;
+
+    if (val) {
+        std::string offset_str;
+        EncodeUint64BigEndian(offset, &offset_str);
+        std::string size_str;
+        EncodeUint64BigEndian(size, &size_str);
+        std::string buf_str(buf, 0, size);
+        *val = offset_str + size_str + buf_str;
+    }
+}
+void ToolParseContextKey(std::string* db_name, uint64_t* ino, const ::leveldb::Slice& key,
+                        uint64_t* offset, uint64_t* size, std::string* context, const ::leveldb::Slice& value) {
+    uint64_t tmp_len = strlen("ContentKey") + 1;
+
+    ::leveldb::Slice db_slice(key.data() + tmp_len, key.size() - tmp_len);
+    *db_name = std::string(db_slice.data(), strlen(db_slice.data()));
+
+    ::leveldb::Slice ino_slice(db_slice.data() + db_name->size() + 1, db_slice.size() - db_name->size() - 1);
+    *ino = ::mdt::DecodeBigEndain(ino_slice.data());
+
+    *offset = ::mdt::DecodeBigEndain(value.data());
+    ::leveldb::Slice size_slice(value.data() + 8, value.size() - 8);
+    *size = ::mdt::DecodeBigEndain(size_slice.data());
+    ::leveldb::Slice con_slice(size_slice.data() + 8, size_slice.size() - 8);
+    *context = std::string(con_slice.data(), con_slice.size());
+}
 int LeveldbDumpOp(std::vector<std::string>& cmd_vec) {
     // parse param
     std::string lpath = cmd_vec[1];
     std::string db_name = cmd_vec[2];
-    std::string table_name = cmd_vec[3];
+    std::string table_name = cmd_vec[3]; // db name
 
     leveldb::DB* db;
     leveldb::Options options;
@@ -144,16 +227,125 @@ int LeveldbDumpOp(std::vector<std::string>& cmd_vec) {
 
     if (db_name == "Magic") {
         // search MagicYoYo(pri) table
+        std::string key, value;
+        key = "MagicYoYo1989";
+        key.push_back('\0');
+        key+= table_name;
+        key.push_back('\0');
+
+        leveldb::Iterator* db_it = db->NewIterator(leveldb::ReadOptions());
+
+        std::string startkey, endkey;
+        startkey = key;
+        std::string start_ino_str;
+        EncodeUint64BigEndian((uint64_t)0UL, &start_ino_str);
+        startkey += start_ino_str;
+
+        endkey = key;
+        std::string end_ino_str;
+        EncodeUint64BigEndian(0xffffffffffffffff, &end_ino_str);
+        endkey += end_ino_str;
+
+        for (db_it->Seek(startkey);
+                db_it->Valid() && db_it->key().ToString() < endkey;
+                db_it->Next()) {
+            leveldb::Slice lkey = db_it->key();
+            leveldb::Slice lvalue = db_it->value();
+            uint64_t tmp_ino;
+            const std::string& fname = lvalue.ToString();
+
+            leveldb::Slice ino_str = leveldb::Slice(lkey.data() + key.size(), 8);
+            tmp_ino = ::mdt::DecodeBigEndain(ino_str.data());
+            if (tmp_ino != 0 || tmp_ino != 0xffffffffffffffff) {
+                //event_vec->push_back(std::pair<std::string, uint64_t>(fname, tmp_ino));
+                std::cout << "Magic: ino " << tmp_ino << ", filename " << fname <<std::endl;
+            }
+        }
+        delete db_it;
 
     } else if (db_name == "CurrentOffset") {
         // search current offset table
+        std::string key, value;
+        key = "CurrentOffset";
+        key.push_back('\0');
+        key+= table_name;
+        key.push_back('\0');
+
+        leveldb::Iterator* db_it = db->NewIterator(leveldb::ReadOptions());
+
+        std::string startkey, endkey;
+        startkey = key;
+        std::string start_ino_str;
+        EncodeUint64BigEndian((uint64_t)0UL, &start_ino_str);
+        startkey += start_ino_str;
+
+        endkey = key;
+        std::string end_ino_str;
+        EncodeUint64BigEndian(0xffffffffffffffff, &end_ino_str);
+        endkey += end_ino_str;
+
+        for (db_it->Seek(startkey);
+                db_it->Valid() && db_it->key().ToString() < endkey;
+                db_it->Next()) {
+            leveldb::Slice lkey = db_it->key();
+            leveldb::Slice lvalue = db_it->value();
+            uint64_t tmp_ino;
+            uint64_t tmp_offset;
+
+            leveldb::Slice ino_str = leveldb::Slice(lkey.data() + key.size(), 8);
+            leveldb::Slice offset_str = leveldb::Slice(lvalue.data(), 8);
+            tmp_ino = ::mdt::DecodeBigEndain(ino_str.data());
+            tmp_offset = ::mdt::DecodeBigEndain(offset_str.data());
+            if (tmp_ino != 0 || tmp_ino != 0xffffffffffffffff) {
+                //event_vec->push_back(std::pair<std::string, uint64_t>(fname, tmp_ino));
+                std::cout << "Offset: ino " << tmp_ino << ", offset " << tmp_offset <<std::endl;
+            }
+        }
+        delete db_it;
 
     } else if (db_name == "CheckPoint") {
         // search checkpoint table
+        std::string startkey, endkey;
+        std::string dummy_fname;
+        MakeKeyValue(table_name, dummy_fname, 0, 0, &startkey, 0, NULL);
+        MakeKeyValue(table_name, dummy_fname, 0xffffffffffffffff, 0xffffffffffffffff, &endkey, 0, NULL);
+
+        leveldb::Iterator* db_it = db->NewIterator(leveldb::ReadOptions());
+        for (db_it->Seek(startkey);
+                db_it->Valid() && db_it->key().ToString() < endkey;
+                db_it->Next()) {
+            leveldb::Slice key = db_it->key();
+            leveldb::Slice value = db_it->value();
+            uint64_t offset, size, ino;
+            ParseKeyValue(key, value, &ino, &offset, &size);
+            std::cout << "CheckPoint: ino " << ino << ", offset " << offset << ", size " << size << std::endl;
+        }
+        delete db_it;
+
+    } else if (db_name == "Content") {
+        std::string startkey, endkey;
+        ToolMakeContextKey(table_name, 0, &startkey, 0, 0, NULL, NULL);
+        ToolMakeContextKey(table_name, 0xffffffffffffffff, &endkey, 0, 0, NULL, NULL);
+
+        leveldb::Iterator* db_it = db->NewIterator(leveldb::ReadOptions());
+        for (db_it->Seek(startkey);
+             db_it->Valid() && db_it->key().ToString() < endkey;
+             db_it->Next()) {
+            leveldb::Slice key = db_it->key();
+            leveldb::Slice value = db_it->value();
+            uint64_t offset, size, ino;
+            std::string db_name, context;
+            ToolParseContextKey(&db_name, &ino, key.ToString(), &offset, &size, &context, value.ToString());
+            std::cout << ">>>>> Content: db " << db_name << ", ino " << ino << ", offset " << offset
+                << ", size " << size << ", content: " << context << std::endl;
+        }
+        delete db_it;
 
     } else {
+        delete db;
         return -1;
     }
+    delete db;
     return 0;
 }
 
@@ -1706,6 +1898,12 @@ int main(int ac, char* av[]) {
             non_interactive_cmd_vec.push_back("1");
             non_interactive_cmd_vec.push_back(FLAGS_cmd_primary_key);
             SearchPrimaryKey(non_interactive_cmd_vec);
+        } else if (FLAGS_cmd == "LeveldbDump") {
+            non_interactive_cmd_vec.push_back(FLAGS_cmd);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_lpath);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_db_name);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_table_name);
+            LeveldbDumpOp(non_interactive_cmd_vec);
         } else {
             std::cout << "interactive mode, cmd " << FLAGS_cmd << " not know\n";
             HelpManue();

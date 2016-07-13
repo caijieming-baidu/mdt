@@ -27,6 +27,7 @@
 #include "leveldb/db.h"
 #include "leveldb/slice.h"
 #include "leveldb/status.h"
+#include "leveldb/write_batch.h"
 #include "proto/query.pb.h"
 #include "proto/scheduler.pb.h"
 #include "utils/coding.h"
@@ -70,6 +71,7 @@ namespace agent {
  */
 
 static int64_t kLastLogWarningTime;
+static uint64_t kReadBlockSize = 1048576;
 
 void* LogStreamWrapper(void* arg) {
     LogStream* stream = (LogStream*)arg;
@@ -232,14 +234,15 @@ void LogStream::DumpWriteEvent(const std::string& filename, uint64_t ino) {
     key += ino_str;
 
     value = filename;
-    VLOG(30) << "dump write event, key " << key << ", value " << value;
 
     std::string value1;
     leveldb::Status s;
     s = log_options_.db->Get(leveldb::ReadOptions(), key, &value1);
     if (!s.ok()) {
+        VLOG(30) << "dump write event, key " << key << ", value " << value << ", ino " << ino;
         s = log_options_.db->Put(leveldb::WriteOptions(), key, value);
     } else if (value != value1) {
+        VLOG(30) << "dump write event, key " << key << ", value " << value << ", ino " << ino;
         s = log_options_.db->Put(leveldb::WriteOptions(), key, value);
     }
     if (!s.ok()) {
@@ -291,20 +294,20 @@ void LogStream::RecoverWriteEvent(std::vector<std::pair<std::string, uint64_t> >
     }
     delete db_it;
 }
-void LogStream::EraseWriteEvent(const std::string& filename, uint64_t ino) {
-    std::string key, value;
-    key = "MagicYoYo1989";
-    key.push_back('\0');
-    key+= module_name_;
-    key.push_back('\0');
+void LogStream::EraseWriteEvent(const std::string& filename, uint64_t ino, std::string* key) {
+    *key = "MagicYoYo1989";
+    key->push_back('\0');
+    *key += module_name_;
+    key->push_back('\0');
 
     std::string ino_str;
     EncodeUint64BigEndian(ino, &ino_str);
-    key += ino_str;
+    *key += ino_str;
 
-    value = filename;
-
+    //value = filename;
+#if 0
     leveldb::Status s;
+    VLOG(30) << "Magic Table delete: ino " << ino << ", filename " << filename;
     s = log_options_.db->Delete(leveldb::WriteOptions(), key);
     if (!s.ok()) {
         // reopen leveldb, flush error
@@ -316,6 +319,7 @@ void LogStream::EraseWriteEvent(const std::string& filename, uint64_t ino) {
             LOG(WARNING) << "EraseWriteEvent, re-open error";
         }
     }
+#endif
     return;
 }
 
@@ -385,9 +389,14 @@ void LogStream::Run() {
                 if (file_stream) {
                     file_stream->DeleteCheckoutPoint(key);
                 }
-                VLOG(30) << "delete key, file " << key->filename << ", key " << (uint64_t)key << ", offset " << key->offset;
+                VLOG(30) << "delete key, file " << key->filename << ", key " << (uint64_t)key << ", offset " << key->offset
+                    << ", ino " << key->ino;
                 delete key;
             }
+        }
+        int64_t handle_suc_ts = mdt::timer::get_micros();
+        if (handle_suc_ts > start_ts + 10000) {
+            VLOG(30) << "handle succ timestamp " << handle_suc_ts - start_ts;
         }
 
         // handle fail push callback
@@ -431,12 +440,17 @@ void LogStream::Run() {
                 delete key;
             }
         }
+        int64_t handle_fail_ts = mdt::timer::get_micros();
+        if (handle_fail_ts > handle_suc_ts + 10000) {
+            VLOG(30) << "handle fail timestamp " << handle_fail_ts - handle_suc_ts;
+        }
 
         // handle write event
         std::map<uint64_t, std::string>::iterator write_it = local_write_event.begin();
         for(; write_it != local_write_event.end(); ++write_it) {
             uint64_t ino = write_it->first;
             const std::string& filename = write_it->second;
+            VLOG(30) << ">>>>> Handle write: ino " << ino << ", filename " << filename;
             std::map<uint64_t, FileStream*>::iterator file_it = file_streams_.find(ino);
             FileStream* file_stream;
             if (file_it != file_streams_.end()) {
@@ -446,6 +460,7 @@ void LogStream::Run() {
                     VLOG(30) << "file " << file_stream->GetFileName() << " has been rename, new name " << filename
                         << ", ino " << ino;
                     file_stream->SetFileName(filename);
+                    DumpWriteEvent(file_stream->GetFileName(), ino);
                 }
                 file_stream->OpenFile();
             } else {
@@ -465,6 +480,7 @@ void LogStream::Run() {
                                 VLOG(60) << "file stream evict, " << tmp_file_stream->GetFileName();
                                 file_streams_.erase(stream_it);
                                 delete tmp_file_stream;
+
                                 reclaim_succ = true;
                                 break;
                             }
@@ -502,8 +518,7 @@ void LogStream::Run() {
             int file_read_res = 0;
             if ((file_read_res = file_stream->Read(&line_vec, &key)) >= 0) {
                 if (line_vec.size() == 0) { // key will be null
-                    VLOG(30) << "read file end, " << filename << ", ino " << ino;
-                    DeleteWatchEvent(filename, ino, false);
+                    //DeleteWatchEvent(file_stream->GetFileName(), ino, false);
                     continue;
                 }
 
@@ -515,25 +530,25 @@ void LogStream::Run() {
                 AsyncPush(req_vec, key);
                 AsyncPushMonitor(table_name, monitor_vec);
 
-                AddWriteEvent(filename, ino);
+                AddWriteEvent(file_stream->GetFileName(), ino);
             } else if (file_read_res == 0) {
                 // file reach end
-                VLOG(30) << "read file end, " << filename << ", ino " << ino;
-                DeleteWatchEvent(filename, ino, false);
+                VLOG(30) << "read file end, " << file_stream->GetFileName() << ", ino " << ino;
+                //DeleteWatchEvent(file_stream->GetFileName(), ino, false);
             } else if (file_read_res == -1) {
                 // file error, give it
                 LOG(WARNING) << "Missfile=" << file_stream->GetFileName() << " MissInode=" << ino;
                 kfile_miss_num.Inc();
-                DeleteWatchEvent(filename, ino, false);
+                DeleteWatchEvent(file_stream->GetFileName(), ino, false);
             } else if (file_read_res == -2) {
                 // delay retry
-                VLOG(30) << "delay schedule read, " << filename << ", ino " << ino;
+                VLOG(30) << "delay schedule read, " << file_stream->GetFileName() << ", ino " << ino;
                 ThreadPool::Task task =
-                    boost::bind(&LogStream::AddWriteEvent, this, filename, ino);
+                    boost::bind(&LogStream::AddWriteEvent, this, file_stream->GetFileName(), ino);
                 fail_delay_thread_.DelayTask(FLAGS_delay_retry_time, task);
             } else {
                 VLOG(30) << "has write event, but read nothing";
-                DeleteWatchEvent(filename, ino, false);
+                //DeleteWatchEvent(file_stream->GetFileName(), ino, false);
             }
         }
 
@@ -544,14 +559,31 @@ void LogStream::Run() {
             const std::string& filename = delete_it->second;
             std::map<uint64_t, FileStream*>::iterator file_it = file_streams_.find(ino);
             if (file_it != file_streams_.end()) {
-                VLOG(30) << "delete filestream, " << filename;
                 FileStream* file_stream = file_it->second;
                 // if no one refer this file stream, then delete it
                 if (file_stream->MarkDelete() >= 0) {
                     // TODO: need delete file_stream ??
                     file_streams_.erase(file_it);
                     delete file_stream;
-                    //EraseWriteEvent(filename, ino);// mark delete event
+
+                    // delete magic,current table, :)   :(-
+                    std::string newname;
+                    struct stat stat_buf;
+                    uint64_t fino;
+                    if (lstat(filename.c_str(), &stat_buf) < 0) {
+                        // filename invalid
+                        if (!StreamInodeToFileName(ino, filename, &newname)) {
+                            DeleteMagicAndOffset(ino, filename);
+                        }
+                    } else {
+                        fino = (uint64_t)stat_buf.st_ino;
+                        if (fino != ino) {
+                            // file rename
+                            if (!StreamInodeToFileName(ino, filename, &newname)) {
+                                DeleteMagicAndOffset(ino, filename);
+                            }
+                        }
+                    }
                 } else {
                     // add into delete queue without wakeup thread
                     ThreadPool::Task task =
@@ -559,9 +591,61 @@ void LogStream::Run() {
                     fail_delay_thread_.DelayTask(FLAGS_delay_retry_time, task);
                     //DeleteWatchEvent(filename, ino, false);
                 }
+            } else {
+                // handle file delete and no file stream(evict)
+                // delete magic,current table, :)   :(-
+                std::string newname;
+                struct stat stat_buf;
+                uint64_t fino;
+                if (lstat(filename.c_str(), &stat_buf) < 0) {
+                    // filename invalid
+                    if (!StreamInodeToFileName(ino, filename, &newname)) {
+                        DeleteMagicAndOffset(ino, filename);
+                    }
+                } else {
+                    fino = (uint64_t)stat_buf.st_ino;
+                    if (fino != ino) {
+                        // file rename
+                        if (!StreamInodeToFileName(ino, filename, &newname)) {
+                            DeleteMagicAndOffset(ino, filename);
+                        }
+                    }
+                }
             }
         }
 
+/*
+ *  (handle delete evet miss)
+ *      LEVELDB data: MagicYoYo1989, CurrentOffset, checkpoint
+ *      MagicYoYo1989=db+ino, path
+ *      CurrentOffset=db+ino, offset
+ *      Content=db+ino, offset+size+1k raw data
+ *      CheckPoint=db+ino+offset, size
+ */
+#if 0
+        int64_t curr_check_ts = mdt::timer::get_micros();
+        if (curr_check_ts - last_ino_check_ts_ > 600000000) { // checkout per 10 min
+            last_ino_check_ts_ = curr_check_ts;
+
+            if (FLAGS_enable_reclaim_ino) {
+                //ReclaimOrphanInode(module_name_);
+            }
+        } else {
+            bool sched_need = true;
+            pthread_spin_lock(&lock_);
+            if (ctrl_event_.size() > 0) {
+                sched_need = false;
+            }
+            pthread_spin_unlock(&lock_);
+            if (sched_need) {
+                //ThreadPool::Task task1 =
+                //    boost::bind(&LogStream::AddCtrlEvent, this, 0);
+                //fail_delay_thread_.DelayTask(60000, task1);
+            }
+        }
+#endif
+
+        // try to dump some information
         int64_t end_ts = mdt::timer::get_micros();
         VLOG(30) << "logstream run duration, " << end_ts - start_ts << ", end ts " << end_ts << ", start ts " << last_update_time_;
         int64_t curr_pending_req = 0;
@@ -644,6 +728,239 @@ void LogStream::Run() {
         }
         pthread_spin_unlock(server_addr_lock_);
     }
+}
+
+void LogStream::StreamMakeContextKey(const std::string& db_name, uint64_t ino, std::string* key,
+                                     uint64_t offset, uint64_t size, char* buf, std::string* val) {
+    *key = "ContentKey";
+    key->push_back('\0');
+    *key += db_name;
+    key->push_back('\0');
+    std::string ino_str;
+    EncodeUint64BigEndian(ino, &ino_str);
+    *key += ino_str;
+
+    if (val) {
+        std::string offset_str;
+        EncodeUint64BigEndian(offset, &offset_str);
+        std::string size_str;
+        EncodeUint64BigEndian(size, &size_str);
+        std::string buf_str(buf, 0, size);
+        *val = offset_str + size_str + buf_str;
+    }
+}
+void LogStream::DeleteMagicAndOffset(uint64_t ino, const std::string& filename) {
+    leveldb::WriteBatch batch;
+
+    std::string magic_key;
+    EraseWriteEvent(filename, ino, &magic_key);
+    batch.Delete(magic_key);
+
+    std::string offset_key;
+    StreamMakeCurrentOffsetKey(module_name_, filename, ino, 0, &offset_key, NULL);
+    batch.Delete(offset_key);
+
+    std::string ckey;
+    StreamMakeContextKey(module_name_, ino, &ckey, 0, 0, NULL, NULL);
+    batch.Delete(ckey);
+
+    VLOG(30) << "Magic,Offset,Content Table delete: ino " << ino << ", filename " << filename;
+
+    // delete leveldb stat
+    leveldb::Status ds = log_options_.db->Write(leveldb::WriteOptions(), &batch);
+    if (!ds.ok()) {
+        delete log_options_.db;
+        log_options_.db = NULL;
+        leveldb::Options options;
+        ds = leveldb::DB::Open(options, log_options_.db_dir.c_str(), &log_options_.db);
+        if (!ds.ok()) {
+            LOG(WARNING) << "leveldb reopen errno " << ds.ToString();
+        }
+    }
+}
+
+// key=CurrentOffset'\0'dbname'\0'ino;
+// value=offset
+void LogStream::StreamMakeCurrentOffsetKey(const std::string& module_name,
+                                     const std::string& filename,
+                                     uint64_t ino,
+                                     uint64_t offset,
+                                     std::string* key,
+                                     std::string* value) {
+    *key = "CurrentOffset";
+    key->push_back('\0');
+    *key += module_name;
+    key->push_back('\0');
+
+    std::string ino_str;
+    EncodeUint64BigEndian(ino, &ino_str);
+    *key += ino_str;
+
+    if (value) {
+        std::string offset_str;
+        EncodeUint64BigEndian(offset, &offset_str);
+        *value = offset_str;
+    }
+}
+
+// key=dbname'\0'ino offset, value=size
+void LogStream::StreamMakeKeyValue(const std::string& module_name,
+                             const std::string& filename,
+                             uint64_t ino,
+                             uint64_t offset,
+                             std::string* key,
+                             uint64_t size,
+                             std::string* value) {
+    *key = "CheckPoint";
+    key->push_back('\0');
+    *key += module_name;
+    key->push_back('\0');
+    std::string ino_str;
+    EncodeUint64BigEndian(ino, &ino_str);
+    *key += ino_str;
+
+    std::string offset_str;
+    EncodeUint64BigEndian(offset, &offset_str);
+    *key += offset_str;
+
+    if (value) {
+        EncodeUint64BigEndian(size, value);
+    }
+    return;
+}
+
+void LogStream::StreamParseKeyValue(const leveldb::Slice& key,
+                              const leveldb::Slice& value,
+                              uint64_t* ino,
+                              uint64_t* offset, uint64_t* size) {
+    int prefixlen = strlen(key.data());
+    leveldb::Slice db_slice(key.data() + prefixlen + 1, key.size() - prefixlen - 1);
+
+    int mlen = strlen(db_slice.data());
+    leveldb::Slice ino_str = leveldb::Slice(db_slice.data() + mlen + 1, 8);
+    *ino = DecodeBigEndain(ino_str.data());
+
+    leveldb::Slice offset_str = leveldb::Slice(db_slice.data() + mlen + 1 + 8, 8);
+    *offset = DecodeBigEndain(offset_str.data());
+
+    *size = DecodeBigEndain(value.data());
+}
+
+void LogStream::ReclaimOrphanInode(const std::string& db_name) {
+    // fname + ino
+    std::vector<std::pair<std::string, uint64_t> > event_vec;
+    RecoverWriteEvent(&event_vec);
+
+    for (uint32_t i = 0; i < event_vec.size(); i++) {
+        std::string newname;
+        if (!StreamInodeToFileName(event_vec[i].second, event_vec[i].first, &newname)) {
+            // file has been delete, check cp
+            leveldb::Iterator* db_it = log_options_.db->NewIterator(leveldb::ReadOptions());
+            std::string startkey, endkey;
+            StreamMakeKeyValue(module_name_, event_vec[i].first, event_vec[i].second, 0, &startkey, 0, NULL);
+            StreamMakeKeyValue(module_name_, event_vec[i].first, event_vec[i].second, 0xffffffffffffffff, &endkey, 0, NULL);
+            bool has_cp = false;
+            for (db_it->Seek(startkey);
+                    db_it->Valid() && db_it->key().ToString() < endkey;
+                    db_it->Next()) {
+                has_cp = true;
+                break;
+            }
+            delete db_it;
+            if (has_cp) {
+                continue;
+            }
+
+            VLOG(35) << "reclaim magic, offset table, ino " << event_vec[i].second
+                << ", filename " << event_vec[i].first;
+            DeleteMagicAndOffset(event_vec[i].second, event_vec[i].first);
+#if 0
+            // no check point, TODO: may use write batch
+            leveldb::WriteBatch batch;
+            std::string magic_key;
+            EraseWriteEvent(event_vec[i].first, event_vec[i].second, &magic_key);
+            batch.Delete(magic_key);
+
+            std::string offset_key;
+            StreamMakeCurrentOffsetKey(db_name, event_vec[i].first, event_vec[i].second, 0, &offset_key, NULL);
+            batch.Delete(offset_key);
+
+            // delete leveldb stat
+            leveldb::Status ds = log_options_.db->Write(leveldb::WriteOptions(), &batch);
+            if (!ds.ok()) {
+                delete log_options_.db;
+                log_options_.db = NULL;
+                leveldb::Options options;
+                ds = leveldb::DB::Open(options, log_options_.db_dir.c_str(), &log_options_.db);
+                if (!ds.ok()) {
+                    LOG(WARNING) << "leveldb reopen errno " << ds.ToString();
+                }
+            }
+#endif
+        }
+    }
+}
+
+bool LogStream::StreamInodeToFileName(uint64_t ino, const std::string& filename, std::string* newname) {
+    // get parent dir
+    newname->clear();
+    std::string dir;
+    std::string delim("/");
+    std::size_t pos = filename.rfind(delim);
+    if (pos != std::string::npos) {
+        dir = std::string(filename, 0, pos + 1);
+
+        // list dir
+        DIR* dirptr = NULL;
+        struct dirent* entry = NULL;
+        if ((dirptr = opendir(dir.c_str())) != NULL) {
+            while ((entry = readdir(dirptr)) != NULL) {
+                std::string fname(entry->d_name);
+                if (fname == "." || fname == "..") {
+                    continue;
+                }
+                // find filename match ino
+                uint64_t tmp_ino = (uint64_t)entry->d_ino;
+                if (tmp_ino == ino) {
+                    *newname = dir + fname;
+                    closedir(dirptr);
+                    return true;
+                }
+
+                // subdir, search into it
+                if (entry->d_type == DT_DIR) {
+                    std::string subdir = dir + fname + "/";
+                    if (StreamFindLostInode(ino, subdir, newname)) {
+                        closedir(dirptr);
+                        return true;
+                    }
+                }
+            }
+            closedir(dirptr);
+        }
+    }
+    return false;
+}
+bool LogStream::StreamFindLostInode(uint64_t ino, const std::string& dir, std::string* newname) {
+    newname->clear();
+
+    // list dir
+    DIR* dirptr = NULL;
+    struct dirent* entry = NULL;
+    if ((dirptr = opendir(dir.c_str())) != NULL) {
+        while ((entry = readdir(dirptr)) != NULL) {
+            // find filename match ino
+            uint64_t tmp_ino = (uint64_t)entry->d_ino;
+            if (tmp_ino == ino) {
+                std::string fname(entry->d_name);
+                *newname = dir + fname;
+                closedir(dirptr);
+                return true;
+            }
+        }
+        closedir(dirptr);
+    }
+    return false;
 }
 
 // split string by substring
@@ -957,7 +1274,7 @@ int LogStream::ParseMdtRequest(const std::string table_name,
 
 void LogStream::ApplyRedoList(FileStream* file_stream) {
     // redo check point
-    VLOG(30) << "begin use redo list to re-send log data";
+    VLOG(30) << "use redo list: filename " << file_stream->GetFileName();
     std::map<uint64_t, uint64_t> redo_list;
     file_stream->GetRedoList(&redo_list);
     std::map<uint64_t, uint64_t>::iterator redo_it = redo_list.begin();
@@ -993,7 +1310,8 @@ int LogStream::AsyncPush(std::vector<mdt::SearchEngine::RpcStoreRequest*>& req_v
     std::string server_addr = info_->collector_addr;
     info_->qps_use += req_vec.size();
     pthread_spin_unlock(server_addr_lock_);
-    VLOG(30) << "async send data to " << server_addr << ", nr req " << req_vec.size() << ", offset " << key->offset;
+    VLOG(30) << "async send data to " << server_addr << ", nr req " << req_vec.size()
+        << ", offset " << key->offset << ", ino " << key->ino << ", filename " << key->filename;
 
     mdt::SearchEngine::SearchEngineService_Stub* service;
     if (req_vec.size() == 0) {
@@ -1004,7 +1322,7 @@ int LogStream::AsyncPush(std::vector<mdt::SearchEngine::RpcStoreRequest*>& req_v
         mdt::SearchEngine::RpcStoreRequest* req = new mdt::SearchEngine::RpcStoreRequest;
         mdt::SearchEngine::RpcStoreResponse* resp = new mdt::SearchEngine::RpcStoreResponse;
         rpc_client_->GetMethodList(server_addr, &service);
-        VLOG(30) << "assume async send success, file " << key->filename << ", offset " << key->offset
+        VLOG(40) << "assume async send success, file " << key->filename << ", offset " << key->offset
             << ", ino " << key->ino;
         AsyncPushCallback(req, resp, 0, 0, service, key);
         return 0;
@@ -1058,7 +1376,8 @@ void LogStream::AsyncPushCallback(const mdt::SearchEngine::RpcStoreRequest* req,
     if (failed || (resp->status() != mdt::SearchEngine::RpcOK)) {
         if (kLastLogWarningTime + 60000000 < timer::get_micros()) {
             kLastLogWarningTime = timer::get_micros();
-            LOG(WARNING) << "async write error " << error << ", key " << (uint64_t)key << ", file " << key->filename << " add to failed event queue"
+            LOG(WARNING) << "async write error " << error << ", key " << (uint64_t)key
+                << ", ino " << key->ino << ", file " << key->filename << " add to failed event queue"
                 << ", req " << (uint64_t)req << ", resp " << (uint64_t)resp << ", key.ref " << key->ref.Get() << ", offset " << key->offset;
         }
         pthread_spin_lock(server_addr_lock_);
@@ -1073,8 +1392,9 @@ void LogStream::AsyncPushCallback(const mdt::SearchEngine::RpcStoreRequest* req,
     } else {
         kseq_send_success.Inc();
 
-        VLOG(30) << "file " << key->filename << " add to success event queue, req "
-            << (uint64_t)req << ", resp " << (uint64_t)resp << ", key " << (uint64_t)key << ", key.ref " << key->ref.Get() << ", offset " << key->offset;
+        VLOG(40) << "ino " << key->ino << ", file " << key->filename << " add to success event queue, req "
+            << (uint64_t)req << ", resp " << (uint64_t)resp << ", key " << (uint64_t)key
+            << ", key.ref " << key->ref.Get() << ", offset " << key->offset;
         pthread_spin_lock(&lock_);
         key_queue_.push(key);
         pthread_spin_unlock(&lock_);
@@ -1135,24 +1455,43 @@ int LogStream::AddCtrlEvent(uint64_t event_id) {
 
 int LogStream::AddWriteEvent(std::string filename) {
     struct stat stat_buf;
-    if (lstat(filename.c_str(), &stat_buf) == -1) {
+    if (lstat(filename.c_str(), &stat_buf) < 0) {
         return 0;
     }
     uint64_t ino = (uint64_t)stat_buf.st_ino;
-    VLOG(35) << "ino " << ino << ", file " << filename << " add to write event queue";
+    VLOG(40) << "ino " << ino << ", file " << filename << " add to write event queue";
 
     pthread_spin_lock(&lock_);
-    write_event_.insert(std::pair<uint64_t, std::string>(ino, filename));
+    //write_event_.insert(std::pair<uint64_t, std::string>(ino, filename));
+    write_event_[ino] = filename;
     pthread_spin_unlock(&lock_);
     thread_event_.Set();
     return 0;
 }
 
 int LogStream::AddWriteEvent(std::string filename, uint64_t ino) {
-    VLOG(35) << "ino " << ino << ", file " << filename << " add to write event queue";
+    std::string newname;
+    struct stat stat_buf;
+    uint64_t fino;
+    if (lstat(filename.c_str(), &stat_buf) < 0) {
+        // filename invalid
+        StreamInodeToFileName(ino, filename, &newname);
+    } else {
+        fino = (uint64_t)stat_buf.st_ino;
+        if (fino != ino) {
+            // file rename
+            StreamInodeToFileName(ino, filename, &newname);
+        }
+    }
+
+    VLOG(40) << "ino " << ino << ", file " << (newname.size() ? newname: filename) << " add to write event queue";
 
     pthread_spin_lock(&lock_);
-    write_event_.insert(std::pair<uint64_t, std::string>(ino, filename));
+    if (newname.size()) {
+        write_event_[ino] = newname;
+    } else {
+        write_event_.insert(std::pair<uint64_t, std::string>(ino, filename));
+    }
     pthread_spin_unlock(&lock_);
     thread_event_.Set();
     return 0;
@@ -1164,10 +1503,12 @@ int LogStream::DeleteWatchEvent(std::string filename, bool need_wakeup) {
         return 0;
     }
     uint64_t ino = (uint64_t)stat_buf.st_ino;
-    VLOG(30) << "file " << filename << " add to delete event queue, wakup " << need_wakeup;
+    VLOG(40) << "ino " << ino << ", file " << filename << ", fsize " << stat_buf.st_size
+        << ", add to delete event queue, wakup " << need_wakeup;
 
     pthread_spin_lock(&lock_);
-    delete_event_.insert(std::pair<uint64_t, std::string>(ino, filename));
+    //delete_event_.insert(std::pair<uint64_t, std::string>(ino, filename));
+    delete_event_[ino] = filename;
     pthread_spin_unlock(&lock_);
     if (need_wakeup) {
         thread_event_.Set();
@@ -1176,10 +1517,26 @@ int LogStream::DeleteWatchEvent(std::string filename, bool need_wakeup) {
 }
 
 int LogStream::DeleteWatchEvent(std::string filename, uint64_t ino, bool need_wakeup) {
-    VLOG(30) << "file " << filename << " add to delete event queue, wakup " << need_wakeup;
+    std::string newname;
+    struct stat stat_buf;
+    uint64_t fino;
+    if (lstat(filename.c_str(), &stat_buf) < 0) {
+        // filename invalid
+        StreamInodeToFileName(ino, filename, &newname);
+    } else {
+        fino = (uint64_t)stat_buf.st_ino;
+        if (fino != ino) {
+            // file rename
+            StreamInodeToFileName(ino, filename, &newname);
+        }
+    }
+
+    VLOG(40) << "ino " << ino << ", file " << (newname.size() ? newname: filename) << ", fsize " << stat_buf.st_size
+        << " add to delete event queue, wakup " << need_wakeup;
 
     pthread_spin_lock(&lock_);
     delete_event_.insert(std::pair<uint64_t, std::string>(ino, filename));
+    //delete_event_[ino] = filename;
     pthread_spin_unlock(&lock_);
     if (need_wakeup) {
         thread_event_.Set();
@@ -1483,6 +1840,7 @@ FileStream::FileStream(std::string module_name, LogOptions log_options,
     pthread_spin_init(&lock_, PTHREAD_PROCESS_PRIVATE);
 
     *success = -1;
+    int64_t fsize = -1;
     while (1) {
         struct stat stat_buf1;
         uint64_t ino1 = 0;
@@ -1492,6 +1850,7 @@ FileStream::FileStream(std::string module_name, LogOptions log_options,
 
         fd_ = -1;
         fd_ = open(filename_.c_str(), O_RDONLY);
+        fsize = (int64_t)stat_buf1.st_size;
 
         struct stat stat_buf2;
         uint64_t ino2 = 0;
@@ -1504,6 +1863,7 @@ FileStream::FileStream(std::string module_name, LogOptions log_options,
             if (fd_ >= 0) {
                 close(fd_);
                 fd_ = -1;
+                fsize = -1;
             }
             std::string newname;
             if (!InodeToFileName(ino_, filename_, &newname)) {
@@ -1522,6 +1882,7 @@ FileStream::FileStream(std::string module_name, LogOptions log_options,
                 if (fd_ >= 0) {
                     close(fd_);
                     fd_ = -1;
+                    fsize = -1;
                 }
                 if (!InodeToFileName(ino_, filename_, &newname)) {
                     // file no exit
@@ -1538,7 +1899,7 @@ FileStream::FileStream(std::string module_name, LogOptions log_options,
             break;
         }
     }
-    VLOG(60) << "new file stream, " << filename_ << ", ino " << ino_;
+    VLOG(35) << "FileStream new, filename " << filename_ << ", ino " << ino_ << ", fsize " << fsize;
 
     //fd_ = open(filename.c_str(), O_RDONLY);
     //if (fd_ < 0) {
@@ -1546,7 +1907,7 @@ FileStream::FileStream(std::string module_name, LogOptions log_options,
     //}
 
     // recovery restart point
-    *success = RecoveryCheckPoint();
+    *success = RecoveryCheckPoint(fsize);
     if (*success < 0) {
         close(fd_);
     }
@@ -1665,7 +2026,9 @@ void FileStream::MakeKeyValue(const std::string& module_name,
                               std::string* key,
                               uint64_t size,
                               std::string* value) {
-    *key = module_name;
+    *key = "CheckPoint";
+    key->push_back('\0');
+    *key += module_name;
     key->push_back('\0');
     std::string ino_str;
     EncodeUint64BigEndian(ino, &ino_str);
@@ -1685,30 +2048,25 @@ void FileStream::ParseKeyValue(const leveldb::Slice& key,
                                const leveldb::Slice& value,
                                uint64_t* ino,
                                uint64_t* offset, uint64_t* size) {
-    int mlen = strlen(key.data());
-    //leveldb::Slice module_name = leveldb::Slice(key.data(), mlen);
-    leveldb::Slice ino_str = leveldb::Slice(key.data() + mlen + 1, 8);
+    int prefixlen = strlen(key.data());
+    leveldb::Slice db_slice(key.data() + prefixlen + 1, key.size() - prefixlen - 1);
+
+    int mlen = strlen(db_slice.data());
+    leveldb::Slice ino_str = leveldb::Slice(db_slice.data() + mlen + 1, 8);
     *ino = DecodeBigEndain(ino_str.data());
 
-    leveldb::Slice offset_str = leveldb::Slice(key.data() + mlen + 1 + 8, 8);
+    leveldb::Slice offset_str = leveldb::Slice(db_slice.data() + mlen + 1 + 8, 8);
     *offset = DecodeBigEndain(offset_str.data());
 
     *size = DecodeBigEndain(value.data());
 }
 
 // use leveldb recovery mem cp list
-int FileStream::RecoveryCheckPoint() {
+int FileStream::RecoveryCheckPoint(int64_t fsize) {
     int64_t begin_ts = timer::get_micros();
     int64_t end_ts;
-
-#if 0
-    struct stat stat_buf;
-    if (lstat(filename_.c_str(), &stat_buf) == -1) {
-        return -1;
-    }
-    uint64_t file_size = stat_buf.st_size;
-    bool file_rename = false;
-#endif
+    leveldb::WriteBatch batch;
+    uint64_t batch_size = 0;
 
     leveldb::Iterator* db_it = log_options_.db->NewIterator(leveldb::ReadOptions());
     std::string startkey, endkey;
@@ -1722,13 +2080,7 @@ int FileStream::RecoveryCheckPoint() {
         uint64_t offset, size, ino;
         ParseKeyValue(key, value, &ino, &offset, &size);
         VLOG(30) << "recovery cp, offset " << offset << ", size " << size << ", ino " << ino;
-#if 0
-        if (file_rename || (file_size < (offset + size))) {
-            // file has been rename
-            file_rename = true;
-            break;
-        }
-#endif
+
         // insert [offset, size] into mem cp list
         pthread_spin_lock(&lock_);
         std::map<uint64_t, uint64_t>::iterator cp_it =  mem_checkpoint_list_.find(offset);
@@ -1743,6 +2095,9 @@ int FileStream::RecoveryCheckPoint() {
             redo_list_[offset] = size;
         }
         pthread_spin_unlock(&lock_);
+
+        batch.Delete(key);
+        batch_size++;
 
         // update current_offset
         if (current_offset_ < offset + size) {
@@ -1760,55 +2115,70 @@ int FileStream::RecoveryCheckPoint() {
         if (tmp_offset > current_offset_) {
             current_offset_ = tmp_offset;
         }
+
+        batch.Delete(offset_key);
+        batch_size++;
     }
 
-#if 0
-    // clear old file stat
-    if (file_rename) {
-        VLOG(30) << "log file rename after agent down, file " << filename_;
+    // ******* check ino reuse ********
+    bool file_change = true;
+    if ((fsize >= 0) && ((uint64_t)fsize >= current_offset_)) {
+        // check content key
+        std::string ckey, cval;
+        MakeContextKey(module_name_, ino_, &ckey, 0, 0, NULL, NULL);
+        leveldb::Status cs = log_options_.db->Get(leveldb::ReadOptions(), ckey, &cval);
+        if (cs.ok()) {
+            uint64_t coffset, csize;
+            std::string c2;
+            if (ParseContextKey(NULL, NULL, NULL, &coffset, &csize, &c2, &cval)) {
+                char* buf = new char[csize];
+                ssize_t res = pread(fd_, buf, csize, coffset);
+                if ((res >= 0) && ((uint64_t)res == csize)) {
+                    std::string c1(buf, csize);
+                    VLOG(35) << "file change check, c1 " << c1 << ", c2 " << c2;
+                    if (c1 == c2) {
+                        file_change = false;
+                    }
+                }
+                delete [] buf;
+            } else {
+                VLOG(35) << "content key parse error, ino " << ino_ << ", filename " << filename_
+                    << ", offset " << current_offset_;
+            }
+
+            batch.Delete(ckey);
+            batch_size++;
+        }
+    }
+
+    // file change before restart, clear old file stat
+    if (file_change) {
+        VLOG(30) << "ino reuse, filename " << filename_ << ", ino " << ino_
+            << ", offset " << current_offset_ << ", fsize " << fsize;
         pthread_spin_lock(&lock_);
         mem_checkpoint_list_.clear();
         redo_list_.clear();
         current_offset_ = 0;
         pthread_spin_unlock(&lock_);
 
-        // delete cp in leveldb
-        db_it = log_options_.db->NewIterator(leveldb::ReadOptions());
-        MakeKeyValue(module_name_, filename_, ino_, 0, &startkey, 0, NULL);
-        MakeKeyValue(module_name_, filename_, ino_, 0xffffffffffffffff, &endkey, 0, NULL);
-        leveldb::Status s;
-        for (db_it->Seek(startkey);
-                db_it->Valid() && db_it->key().ToString() < endkey;
-                db_it->Next()) {
-            leveldb::Slice key = db_it->key();
-            leveldb::Slice value = db_it->value();
-            uint64_t offset, size, ino;
-            ParseKeyValue(key, value, &ino, &offset, &size);
-            s = log_options_.db->Delete(leveldb::WriteOptions(), key);
-            if (!s.ok()) {
-                kleveldb_delete_fail.Inc();
-                LOG(WARNING) << "delete db checkpoint error, " << filename_ << ", offset " << offset
-                    << ", size " << size;
-                break;
-            }
-        }
-        delete db_it;
-
-        if (!s.ok()) {
-            delete log_options_.db;
-            log_options_.db = NULL;
-            leveldb::Options options;
-            s = leveldb::DB::Open(options, log_options_.db_dir.c_str(), &log_options_.db);
-            if (!s.ok()) {
-                LOG(WARNING) << "leveldb reopen errno " << s.ToString();
-                kleveldb_reopen_fail.Inc();
+        // delete leveldb stat
+        if (batch_size) {
+            leveldb::Status ds = log_options_.db->Write(leveldb::WriteOptions(), &batch);
+            if (!ds.ok()) {
+                delete log_options_.db;
+                log_options_.db = NULL;
+                leveldb::Options options;
+                ds = leveldb::DB::Open(options, log_options_.db_dir.c_str(), &log_options_.db);
+                if (!ds.ok()) {
+                    LOG(WARNING) << "leveldb reopen errno " << ds.ToString();
+                    kleveldb_reopen_fail.Inc();
+                }
             }
         }
     }
-#endif
 
     end_ts = timer::get_micros();
-    VLOG(50) << "file stream recovery, file " << filename_ << ", ino " << ino_
+    VLOG(35) << "file stream recovery, file " << filename_ << ", ino " << ino_
         << ", current_offset " << current_offset_ << ", cost time " << end_ts - begin_ts;
     return 0;
 }
@@ -1904,6 +2274,43 @@ ssize_t FileStream::ParseLine(char* buf, ssize_t size, std::vector<std::string>*
     return res;
 }
 
+// key = ContentKey + db + ino, value = offset + size +content
+void FileStream::MakeContextKey(const std::string& db_name, uint64_t ino, std::string* key,
+                                uint64_t offset, uint64_t size, char* buf, std::string* val) {
+    *key = "ContentKey";
+    key->push_back('\0');
+    *key += db_name;
+    key->push_back('\0');
+    std::string ino_str;
+    EncodeUint64BigEndian(ino, &ino_str);
+    *key += ino_str;
+
+    if (val) {
+        std::string offset_str;
+        EncodeUint64BigEndian(offset, &offset_str);
+        std::string size_str;
+        EncodeUint64BigEndian(size, &size_str);
+        std::string buf_str(buf, 0, size);
+        *val = offset_str + size_str + buf_str;
+    }
+}
+bool FileStream::ParseContextKey(std::string* db_name, uint64_t* ino, std::string* key,
+                                 uint64_t* offset, uint64_t* size, std::string* buf, std::string* val) {
+    if (val) {
+        if (val->size() <= (2 * sizeof(uint64_t))) {
+            return false;
+        }
+        *offset = DecodeBigEndain(val->c_str());
+        *size = DecodeBigEndain(val->c_str() + sizeof(uint64_t));
+        if (*offset != 0 || *size > 1048576) {
+            return false;
+        }
+        leveldb::Slice sli(val->c_str() + 2 * sizeof(uint64_t), val->size() - 2 * sizeof(uint64_t));
+        *buf = sli.data();
+    }
+    return true;
+}
+
 // each read granularity is 64KB
 // ret: 0, no data
 //      -1, file error
@@ -1921,7 +2328,7 @@ int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
         }
         pthread_spin_unlock(&lock_);
 
-        uint64_t size = 65536;
+        uint64_t size = kReadBlockSize;
         uint64_t offset = current_offset_;
         char* buf = new char[size];
         ssize_t res = pread(fd_, buf, size, offset);
@@ -1934,8 +2341,16 @@ int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
             kfile_read_fail.Inc();
             ret = -1;
         } else if (res == 0) {
-            VLOG(30) << "file " << filename_ << ", read size 0";
-            delete buf;
+            struct stat stat_buf;
+            int64_t fsize = -1;
+            int64_t fino = -1;
+            if (lstat(filename_.c_str(), &stat_buf) >= 0) {
+                fsize = (int64_t)(stat_buf.st_size);
+                fino = (int64_t)(stat_buf.st_ino);
+            }
+            VLOG(30) << "read file end: ino " << ino_ << ", offset " << offset << ",file " << filename_
+                << ", st ino " << fino << ", st size " << fsize;
+            delete [] buf;
             return 0;
 
         } else {
@@ -1945,9 +2360,26 @@ int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
                 res = -2; // delay retry
             }
         }
-        delete buf;
 
         if (res >= 0) {
+            // Log content into db, use it after restart to check ino reuse, valid current_offset
+            // key:= db+ino, value:=offset+size+content
+            if (offset == 0 && res > 0) {
+                std::string ckey, cval;
+                MakeContextKey(module_name_, ino_, &ckey, offset, res > 1024 ? 1024: res, buf, &cval);
+                leveldb::Status cs = log_options_.db->Put(leveldb::WriteOptions(), ckey, cval);
+                if (!cs.ok()) {
+                    delete log_options_.db;
+                    log_options_.db = NULL;
+                    leveldb::Options options;
+                    cs = leveldb::DB::Open(options, log_options_.db_dir.c_str(), &log_options_.db);
+                    if (!cs.ok()) {
+                        LOG(WARNING) << "leveldb reopen errno " << cs.ToString();
+                    }
+                }
+            }
+
+            // Log CheckPoint
             kfile_read_success.Inc();
 
             *key = new DBKey;
@@ -1962,6 +2394,7 @@ int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
                 line_vec->clear();
             }
         }
+        delete [] buf;
     }
 
     if (fd_ < 0) {
@@ -2028,7 +2461,7 @@ int FileStream::LogCheckPoint(uint64_t offset, uint64_t size) {
         // write db success
         current_offset_ = offset + size;
         ret = size;
-        VLOG(30) << "log cp, write leveldb succes, file " << filename_ << ", offset "
+        VLOG(30) << "log cp, write leveldb succes, ino " << ino_ << ", file " << filename_ << ", offset "
             << offset << ", size " << size << ", current_offset " << current_offset_
             << ", nr pending " << nr_pending << ", max queue size " << FLAGS_file_stream_max_pending_request;
     }
@@ -2050,8 +2483,10 @@ int FileStream::DeleteCheckoutPoint(DBKey* key) {
     pthread_spin_unlock(&lock_);
 
     if (should_dump_offset) {
+        // no write occur, TODO: check file end
         std::string offset_key, offset_val;
         MakeCurrentOffsetKey(module_name_, filename_, key->ino, current_offset_, &offset_key, &offset_val);
+        VLOG(30) << "Offset Table dump: ino " << key->ino << ", filename " << filename_ << ", offset " << current_offset_;
         leveldb::Status s1 = log_options_.db->Put(leveldb::WriteOptions(), offset_key, offset_val);
         if (!s1.ok()) {
             delete log_options_.db;
@@ -2084,7 +2519,7 @@ int FileStream::DeleteCheckoutPoint(DBKey* key) {
     } else {
         kleveldb_delete_success.Inc();
     }
-    VLOG(30) << "delete cp, file " << key->filename << ", cp offset " << key->offset;
+    VLOG(30) << "delete cp, file " << key->filename << ", cp offset " << key->offset << ", ino " << key->ino;
     return 0;
 }
 
@@ -2100,8 +2535,8 @@ int FileStream::CheckPointRead(std::vector<std::string>* line_vec, DBKey** key,
     if (size == 0) {
         if (st_size > current_offset_) {
             size = st_size - current_offset_;
-            if (size > 65536) {
-                size = 65536;
+            if (size > kReadBlockSize) {
+                size = kReadBlockSize;
             }
         } else {
             return ret;
@@ -2122,7 +2557,7 @@ int FileStream::CheckPointRead(std::vector<std::string>* line_vec, DBKey** key,
         // file error or read file end
         if (res <= 0) {
             LOG(WARNING) << "redo cp, read file error " << offset << ", size " << size << ", res " << res;
-            delete buf;
+            delete [] buf;
             return 0;
         }
         uint64_t tmp_res = res;
@@ -2137,7 +2572,7 @@ int FileStream::CheckPointRead(std::vector<std::string>* line_vec, DBKey** key,
             (*key)->offset = offset;
             (*key)->ref.Set(0);
         }
-        delete buf;
+        delete [] buf;
     } else {
         ret = -1;
     }
@@ -2149,13 +2584,16 @@ int FileStream::HanleFailKey(DBKey* key) {
     return 1;
 }
 
+// two case:
+//  1) evict from fd cache
+//  2) delete file event
 int FileStream::MarkDelete() {
     pthread_spin_lock(&lock_);
     uint32_t nr_pending = mem_checkpoint_list_.size();
     pthread_spin_unlock(&lock_);
 
-    VLOG(30) << "delete file stream " << filename_ << ", nr_pending " << nr_pending;
     if (nr_pending == 0) {
+        VLOG(30) << "delete file stream: ino " << ino_ << ", filename " <<  filename_ << ", offset " << current_offset_;
         close(fd_);
         fd_ = -1;
         return 1;

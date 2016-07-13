@@ -58,7 +58,7 @@ public:
     }
     void GetRedoList(std::map<uint64_t, uint64_t>* redo_list);
     void ReSetFileStreamCheckPoint();
-    int RecoveryCheckPoint();
+    int RecoveryCheckPoint(int64_t fsize);
     void GetCheckpoint(DBKey* key, uint64_t* offset, uint64_t* size);
     //ssize_t ParseLine(char* buf, ssize_t size, std::vector<std::string>* line_vec);
     ssize_t ParseLine(char* buf, ssize_t size, std::vector<std::string>* line_vec, bool read_half_line);
@@ -93,6 +93,10 @@ private:
                               std::string* key,
                               std::string* value);
 
+    void MakeContextKey(const std::string& db_name, uint64_t ino, std::string* key,
+                        uint64_t offset, uint64_t size, char* buf, std::string* val);
+    bool ParseContextKey(std::string* db_name, uint64_t* ino, std::string* key,
+                         uint64_t* offset, uint64_t* size, std::string* buf, std::string* val);
 public:
     // profile info
     Counter kreq_success;
@@ -142,7 +146,7 @@ public:
 private:
     void EncodeUint64BigEndian(uint64_t value, std::string* str);
     void DumpWriteEvent(const std::string& filename, uint64_t ino);
-    void EraseWriteEvent(const std::string& filename, uint64_t ino);
+    void EraseWriteEvent(const std::string& filename, uint64_t ino, std::string* key);
     void RecoverWriteEvent(std::vector<std::pair<std::string, uint64_t> >* event_vec);
 
     int CollectorMeta(const mdt::LogAgentService::LogMeta& meta,
@@ -182,27 +186,29 @@ private:
     bool CheckRegex(const std::string& line, const mdt::LogAgentService::Rule& rule);
     bool CheckRecord(const std::string& key, const mdt::LogAgentService::Record& record);
 
-
-    void MakeCurrentOffsetKey(const std::string& module_name,
+    void StreamMakeContextKey(const std::string& db_name, uint64_t ino, std::string* key,
+                              uint64_t offset, uint64_t size, char* buf, std::string* val);
+    void DeleteMagicAndOffset(uint64_t ino, const std::string& filename);
+    void StreamMakeCurrentOffsetKey(const std::string& module_name,
                               const std::string& filename,
                               uint64_t ino,
                               uint64_t offset,
                               std::string* key,
                               std::string* value);
-    void MakeKeyValue(const std::string& module_name,
+    void StreamMakeKeyValue(const std::string& module_name,
                       const std::string& filename,
                       uint64_t ino,
                       uint64_t offset,
                       std::string* key,
                       uint64_t size,
                       std::string* value);
-    void ParseKeyValue(const leveldb::Slice& key,
+    void StreamParseKeyValue(const leveldb::Slice& key,
                        const leveldb::Slice& value,
                        uint64_t* ino,
                        uint64_t* offset, uint64_t* size);
     void ReclaimOrphanInode(const std::string& db_name);
-    bool InodeToFileName(uint64_t ino, const std::string& filename, std::string* newname);
-    bool FindLostInode(uint64_t ino, const std::string& dir, std::string* newname);
+    bool StreamInodeToFileName(uint64_t ino, const std::string& filename, std::string* newname);
+    bool StreamFindLostInode(uint64_t ino, const std::string& dir, std::string* newname);
     int AddCtrlEvent(uint64_t event_id);
 
 public:
