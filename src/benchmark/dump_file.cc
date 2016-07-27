@@ -1,26 +1,35 @@
+// Copyright (c) 2015, Baidu.com, Inc. All Rights Reserved
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include <dirent.h>
+#include <errno.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/time.h>
+#include <unistd.h>
+#include <time.h>
+
+#include <fstream>
+#include <iostream>
+#include <set>
+#include <sstream>
+#include <vector>
+
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/split.hpp>
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/json_parser.hpp>
 #include <boost/foreach.hpp>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
 #include <boost/regex.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
-#include <fstream>
-#include <iostream>
-#include <sstream>
-#include <sys/time.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <errno.h>
-#include <string>
-#include <sys/stat.h>
-#include <sys/time.h>
-#include <dirent.h>
-#include <unistd.h>
-#include <vector>
-#include <set>
+#include <gflags/gflags.h>
+#include <glog/logging.h>
 
 #include "mail/mail.h"
 #include "sdk/db.h"
@@ -29,8 +38,6 @@
 #include "utils/counter.h"
 #include "utils/env.h"
 #include "utils/mutex.h"
-#include <gflags/gflags.h>
-#include <glog/logging.h>
 
 DEFINE_string(op, "", "method:dumpfile, create, get_index");
 DEFINE_string(logfile, "xxx.dat", "log file");
@@ -494,6 +501,13 @@ void ParseLineTest() {
     }
 }
 
+void RandTest() {
+    struct timeval randtime;
+    gettimeofday(&randtime, NULL);
+    uint64_t sleep_duration = (randtime.tv_usec % 3600 + 1) * 1000000;
+    std::cout << "rand sleep " << sleep_duration << " us\n";
+}
+
 // ./dump_file --flagfile=../conf/mdt.flag --op=create --index_list=passuid,mobile --dbname=TEST_db --tablename=TEST_table001
 // ./dump_file --flagfile=../conf/mdt.flag --op=dumpfile --primary_key=id --index_list=passuid,mobile --dbname=TEST_db --tablename=TEST_table001 --logfile=xxxx.dat
 // ./dump_file --flagfile=../conf/mdt.flag --op=get_index --logfile=xxxx.dat
@@ -509,6 +523,7 @@ int main(int ac, char* av[])
     TestInode();
     TestInode2();
     ParseLineTest();
+    RandTest();
 
     // send mail
     std::string to = "caijieming@baidu.com";

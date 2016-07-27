@@ -190,13 +190,13 @@ TableImpl::TableImpl(const TableDescription& table_desc,
     async_tera_writer_(&GLOBAL_async_tera_write_thread),
     info_collector_thread_(&GLOBAL_info_collector_threads) {
     // create timer
-    pthread_create(&timer_tid_, NULL, &TableImpl::TimerThreadWrapper, this);
+    assert(pthread_create(&timer_tid_, NULL, &TableImpl::TimerThreadWrapper, this) >= 0);
 
     // create gc
     //ttl_ = FLAGS_tera_table_ttl;
     ttl_ = table_desc.table_ttl;
     gc_stop_ = false;
-    pthread_create(&gc_tid_, NULL, &TableImpl::GarbageCleanThreadWrapper, this);
+    assert(pthread_create(&gc_tid_, NULL, &TableImpl::GarbageCleanThreadWrapper, this) >= 0);
 
     // background info collector
     ThreadPool::Task task = boost::bind(&TableImpl::BGInfoCollector, this);
@@ -2456,12 +2456,10 @@ void TableImpl::GarbageClean() {
     std::string dummyfname = fs_.root_path_ + "/" + TimeToString(&dummyfiletime) + ".data";
 
     // random sleep
-    /*
     struct timeval randtime;
     gettimeofday(&randtime, NULL);
-    uint64_t sleep_duration = (randtime.tv_usec % 60) * 60000;
+    uint64_t sleep_duration = (randtime.tv_usec % 3600 + 1) * 1000000;
     usleep(sleep_duration);
-    */
 
     // enable gc
     while (1) {

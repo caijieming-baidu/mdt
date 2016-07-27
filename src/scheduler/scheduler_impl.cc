@@ -474,6 +474,7 @@ void SchedulerImpl::DoRpcAddAgentWatchPath(::google::protobuf::RpcController* co
     mdt::LogAgentService::RpcAddWatchPathResponse* resp = new mdt::LogAgentService::RpcAddWatchPathResponse();
     req->set_watch_path(request->watch_path());
 
+    LOG(INFO) << "agent addr " << agent_addr << ", " << req->DebugString();
     rpc_client_->SyncCall(service, &mdt::LogAgentService::LogAgentService_Stub::RpcAddWatchPath, req, resp);
     if (resp->status() == mdt::LogAgentService::kRpcOk) {
         response->set_status(mdt::LogSchedulerService::kRpcOk);

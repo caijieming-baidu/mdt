@@ -25,7 +25,7 @@ INCPATH += -I./src/leveldb -I./src/leveldb/include -I./src -I./include $(DEPS_IN
 #### CFLAGS += -std=c99 $(OPT) $(SHARED_CFLAGS) $(INCPATH) $(PLATFORM_CCFLAGS) 
 CFLAGS += $(OPT) $(SHARED_CFLAGS) $(INCPATH) $(PLATFORM_CCFLAGS) 
 CXXFLAGS += $(OPT) $(DEPS_LDPATH) $(DEPS_LDFLAGS) $(SHARED_CFLAGS) $(INCPATH) $(PLATFORM_CXXFLAGS) 
-LDFLAGS += -rdynamic $(DEPS_LDPATH) $(DEPS_LDFLAGS) -lpthread -lrt -lz -ldl 
+LDFLAGS += -rdynamic $(DEPS_LDPATH) $(DEPS_LDFLAGS) -lpthread -lrt -lz -ldl -luuid 
 
 PROTO_FILES := $(wildcard src/proto/*.proto)
 PROTO_OUT_CC := $(PROTO_FILES:.proto=.pb.cc)

@@ -53,7 +53,7 @@ void* ReportThread(void* arg) {
 SearchEngineImpl::SearchEngineImpl()
     : stop_report_message_(false) {
     rpc_client_ = new RpcClient();
-    pthread_create(&report_tid_, NULL, ReportThread, this);
+    assert(pthread_create(&report_tid_, NULL, ReportThread, this) >= 0);
 }
 SearchEngineImpl::~SearchEngineImpl() {}
 
@@ -356,6 +356,7 @@ void SearchEngineImpl::Store(::google::protobuf::RpcController* ctrl,
         return;
     }
 
+#if 0
     store_qps.Inc();
     store_average_packet_size.Add((int64_t)(req->data().size()));
     if (store_max_packet_size.Get() < (int64_t)(req->data().size())) {
@@ -364,6 +365,7 @@ void SearchEngineImpl::Store(::google::protobuf::RpcController* ctrl,
     if (store_min_packet_size.Get() > (int64_t)(req->data().size())) {
         store_min_packet_size.Set((int64_t)(req->data().size()));
     }
+#endif
 
     VLOG(30) << "store, pkey " << req->primary_key();
 
@@ -465,6 +467,16 @@ void SearchEngineServiceImpl::Store(::google::protobuf::RpcController* ctrl,
                                     ::mdt::SearchEngine::RpcStoreResponse* resp,
                                     ::google::protobuf::Closure* done) {
     resp->set_status(mdt::SearchEngine::RpcOK);
+
+    store_qps.Inc();
+    store_average_packet_size.Add((int64_t)(req->data().size()));
+    if (store_max_packet_size.Get() < (int64_t)(req->data().size())) {
+        store_max_packet_size.Set((int64_t)(req->data().size()));
+    }
+    if (store_min_packet_size.Get() > (int64_t)(req->data().size())) {
+        store_min_packet_size.Set((int64_t)(req->data().size()));
+    }
+
     //VLOG(30) << "store, pkey " << req->primary_key();
     if (se_thread_pool_->PendingNum() > FLAGS_collector_store_max_pending) {
         se_->kstore_busy_count.Inc();

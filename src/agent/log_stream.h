@@ -144,6 +144,7 @@ public:
     int UpdateIndex(const mdt::LogAgentService::RpcUpdateIndexRequest* request);
 
 private:
+    bool CheckReadable(FileStream* file_stream);
     void EncodeUint64BigEndian(uint64_t value, std::string* str);
     void DumpWriteEvent(const std::string& filename, uint64_t ino);
     void EraseWriteEvent(const std::string& filename, uint64_t ino, std::string* key);

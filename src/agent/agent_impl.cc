@@ -243,7 +243,7 @@ int AgentImpl::Init() {
         return -1;
     }
 
-    InitMemDB(&log_options_);
+    //InitMemDB(&log_options_);
 
     char hostname[255];
     if (0 != gethostname(hostname, 256)) {
@@ -345,7 +345,7 @@ void AgentImpl::WatchLogDir(FileSystemInotify* fs_inotify) {
         for (uint32_t i = 0; i < 21; ++i) {
             if (event.mask & event_masks[i].flag) {
                 if (strcmp(event_masks[i].name, "IN_MODIFY") != 0) {
-                    VLOG(30) << "file " << filename << " has event: " << event_masks[i].name;
+                    LOG(INFO) << "file " << filename << " has event: " << event_masks[i].name;
                 }
             }
         }
@@ -500,11 +500,13 @@ int AgentImpl::AddWatchPath(const std::string& dir) {
         return -1;
     }
 
+#if 0
     // add info into mem db
     std::string mkey = kLogDir + kLogDir_hostname + hostname_;
     const ::leveldb::Slice mem_key(mkey);
     const ::leveldb::Slice mem_val(dir);
     ::leveldb::Status s = log_options_.kMemDB->Put(::leveldb::WriteOptions(), mem_key, mem_val);
+#endif
 
     VLOG(30) << "add watch addr " << dir << ", watch fd " << fs_inotify->watch_fd;
     fs_inotify->stop = false;
@@ -528,11 +530,13 @@ int AgentImpl::AddWatchPath(const std::string& dir) {
 
 // log_name := module name's log file name prefix
 int AgentImpl::AddWatchModuleStream(const std::string& module_name, const std::string& log_name) {
+#if 0
     // add info into mem db
     std::string mkey = kLogDir + kLogDir_hostname + hostname_ + "." + module_name;
     const ::leveldb::Slice mem_key(mkey);
     const ::leveldb::Slice mem_val(log_name);
     ::leveldb::Status s = log_options_.kMemDB->Put(::leveldb::WriteOptions(), mem_key, mem_val);
+#endif
 
     VLOG(30) << "add module stream, module name " << module_name << ", file name " << log_name;
     LogStream* stream = NULL;
@@ -658,7 +662,7 @@ void AgentImpl::RpcAddWatchPath(::google::protobuf::RpcController* controller,
                                 ::google::protobuf::Closure* done) {
     if (AddWatchPath(request->watch_path()) < 0) {
         response->set_status(mdt::LogAgentService::kRpcError);
-        //LOG(WARNING) << "add watch event in dir " << request->watch_path() << " failed";
+        VLOG(35) << "add watch event in dir " << request->watch_path() << " failed";
     } else {
         response->set_status(mdt::LogAgentService::kRpcOk);
     }

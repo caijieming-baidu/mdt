@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <sys/time.h>
+#include <uuid/uuid.h>
 
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/classification.hpp>
@@ -375,10 +376,10 @@ void LogStream::Run() {
         // handle push callback event
         while (!local_key_queue.empty()) {
             DBKey* key = local_key_queue.front();
-            std::map<uint64_t, FileStream*>::iterator file_it = file_streams_.find(key->ino);
+            std::map<uint64_t, FileStream*>::iterator succ_file_it = file_streams_.find(key->ino);
             FileStream* file_stream = NULL;
-            if (file_it != file_streams_.end()) {
-                file_stream = file_it->second;
+            if (succ_file_it != file_streams_.end()) {
+                file_stream = succ_file_it->second;
 
                 file_stream->kreq_success.Inc();
             }
@@ -402,10 +403,10 @@ void LogStream::Run() {
         // handle fail push callback
         while (!local_failed_key_queue.empty()) {
             DBKey* key = local_failed_key_queue.front();
-            std::map<uint64_t, FileStream*>::iterator file_it = file_streams_.find(key->ino);
+            std::map<uint64_t, FileStream*>::iterator fail_file_it = file_streams_.find(key->ino);
             FileStream* file_stream = NULL;
-            if (file_it != file_streams_.end()) {
-                file_stream = file_it->second;
+            if (fail_file_it != file_streams_.end()) {
+                file_stream = fail_file_it->second;
 
                 file_stream->kreq_fail.Inc();
             }
@@ -473,13 +474,20 @@ void LogStream::Run() {
                     bool reclaim_succ = false;
                     uint32_t stream_offset = (total_stream_offset_++) % (file_streams_.size());
                     std::map<uint64_t, FileStream*>::iterator stream_it = file_streams_.begin();
-                    for (uint32_t tmp_i = 0; stream_it != file_streams_.end(); tmp_i++, stream_it++) {
+                    for (uint32_t tmp_i = 0; stream_it != file_streams_.end(); tmp_i++, ++stream_it) {
                         if (tmp_i >= stream_offset) {
                             FileStream* tmp_file_stream = stream_it->second;
+                            std::string tmp_filename = tmp_file_stream->GetFileName();
+                            uint64_t tmp_ino = stream_it->first;
                             if (tmp_file_stream->MarkDelete() >= 0) {
-                                VLOG(60) << "file stream evict, " << tmp_file_stream->GetFileName();
+                                VLOG(35) << "file stream evict, " << tmp_file_stream->GetFileName();
                                 file_streams_.erase(stream_it);
                                 delete tmp_file_stream;
+
+                                // delay resched it
+                                ThreadPool::Task task =
+                                    boost::bind(&LogStream::AddWriteEvent, this, tmp_filename, tmp_ino);
+                                fail_delay_thread_.DelayTask(FLAGS_delay_retry_time, task);
 
                                 reclaim_succ = true;
                                 break;
@@ -507,18 +515,34 @@ void LogStream::Run() {
                 if (success < 0) {
                     // TODO: log has been delete before it can be collector, :(-
                     kfile_miss_num.Inc();
-                    LOG(WARNING) << "new file stream " << file_stream->GetFileName() << ", faile, ino " << ino;
+                    LOG(WARNING) << "new stream, filename " << file_stream->GetFileName() << ", faile, ino " << ino;
                 }
                 file_streams_[ino] = file_stream;
-                // may take a little long
-                ApplyRedoList(file_stream);
             }
+
+            // if configure file not push intime, no readable
+            if (!CheckReadable(file_stream)) {
+                VLOG(35) << "no configure, filename " << file_stream->GetFileName() << ", ino " << ino;
+                ThreadPool::Task task =
+                    boost::bind(&LogStream::AddWriteEvent, this, file_stream->GetFileName(), ino);
+                fail_delay_thread_.DelayTask(FLAGS_delay_retry_time, task);
+                continue;
+            }
+            // may take a little long
+            ApplyRedoList(file_stream);
+
             DBKey* key = NULL;
             std::vector<std::string> line_vec;
             int file_read_res = 0;
             if ((file_read_res = file_stream->Read(&line_vec, &key)) >= 0) {
                 if (line_vec.size() == 0) { // key will be null
-                    //DeleteWatchEvent(file_stream->GetFileName(), ino, false);
+                    // read file end, and no ref, evict from cache
+                    if (file_stream->MarkDelete() >= 0) {
+                        VLOG(35) << "evict from cache, ino " << ino << ", filename " << file_stream->GetFileName();
+                        std::map<uint64_t, FileStream*>::iterator tmp_file_it = file_streams_.find(ino);
+                        file_streams_.erase(tmp_file_it);
+                        delete file_stream;
+                    }
                     continue;
                 }
 
@@ -531,10 +555,6 @@ void LogStream::Run() {
                 AsyncPushMonitor(table_name, monitor_vec);
 
                 AddWriteEvent(file_stream->GetFileName(), ino);
-            } else if (file_read_res == 0) {
-                // file reach end
-                VLOG(30) << "read file end, " << file_stream->GetFileName() << ", ino " << ino;
-                //DeleteWatchEvent(file_stream->GetFileName(), ino, false);
             } else if (file_read_res == -1) {
                 // file error, give it
                 LOG(WARNING) << "Missfile=" << file_stream->GetFileName() << " MissInode=" << ino;
@@ -557,13 +577,13 @@ void LogStream::Run() {
         for(; delete_it != local_delete_event.end(); ++delete_it) {
             uint64_t ino = delete_it->first;
             const std::string& filename = delete_it->second;
-            std::map<uint64_t, FileStream*>::iterator file_it = file_streams_.find(ino);
-            if (file_it != file_streams_.end()) {
-                FileStream* file_stream = file_it->second;
+            std::map<uint64_t, FileStream*>::iterator del_file_it = file_streams_.find(ino);
+            if (del_file_it != file_streams_.end()) {
+                FileStream* file_stream = del_file_it->second;
                 // if no one refer this file stream, then delete it
                 if (file_stream->MarkDelete() >= 0) {
                     // TODO: need delete file_stream ??
-                    file_streams_.erase(file_it);
+                    file_streams_.erase(del_file_it);
                     delete file_stream;
 
                     // delete magic,current table, :)   :(-
@@ -1146,11 +1166,19 @@ std::string LogStream::TimeToStringWithTid(struct timeval* filetime) {
 }
 
 std::string LogStream::GetUUID() {
+    char buf[36];
+    uuid_t uid;
+    uuid_generate(uid);
+    uuid_unparse(uid, buf);
+    std::string s = buf;
+    return s;
+#if 0
     boost::uuids::uuid uuid = boost::uuids::random_generator()();
     std::stringstream ss;
     ss << uuid;
     std::string s = ss.str();
     return s;
+#endif
 }
 
 // type 1: sec + micro sec
@@ -1161,6 +1189,21 @@ uint64_t LogStream::ParseTime(const std::string& time_str) {
     return 0;
 }
 
+bool LogStream::CheckReadable(FileStream* file_stream) {
+    std::string table_name;
+    GetTableName(file_stream->GetFileName(), &table_name);
+    pthread_spin_lock(&monitor_lock_);
+    if (index_set_.find(table_name) != index_set_.end()) {
+        pthread_spin_unlock(&monitor_lock_);
+        return true;
+    }
+    pthread_spin_unlock(&monitor_lock_);
+
+    if (!FLAGS_use_regex_index_pattern) {
+        return true;
+    }
+    return false;
+}
 // NOTICE: parse log line, add monitor logic
 // case 1: key1=001,key2=002,key3=003||key4=004,key005=005,key006=006
 // case 2: 001 002 003 004 005 006
@@ -1169,6 +1212,9 @@ int LogStream::ParseMdtRequest(const std::string table_name,
                                std::vector<std::string>& line_vec,
                                std::vector<mdt::SearchEngine::RpcStoreRequest* >* req_vec,
                                std::vector<std::string>* monitor_vec) {
+    int64_t start_ts, end_ts;
+    start_ts = mdt::timer::get_micros();
+
     if (table_name == "" || table_name == "trash") {
         return 0;
     }
@@ -1179,6 +1225,9 @@ int LogStream::ParseMdtRequest(const std::string table_name,
             continue;
         }
 
+        end_ts = mdt::timer::get_micros();
+        VLOG(45) << "parse index " << i << ", table " << table_name << ", " << end_ts - start_ts;
+        start_ts = end_ts;
         // support line filter
         if (string_filter_.size() > 0) {
             bool found = false;
@@ -1194,11 +1243,17 @@ int LogStream::ParseMdtRequest(const std::string table_name,
             }
         }
 
+        end_ts = mdt::timer::get_micros();
+        VLOG(45) << "parse index " << i << ", table " << table_name << ", " << end_ts - start_ts;
+        start_ts = end_ts;
         // support monitor
         if (MonitorHasEvent(table_name, line)) {
             monitor_vec->push_back(line);
         }
 
+        end_ts = mdt::timer::get_micros();
+        VLOG(45) << "parse index " << i << ", table " << table_name << ", " << end_ts - start_ts;
+        start_ts = end_ts;
         // support regex index
         mdt::SearchEngine::RpcStoreRequest* regex_req = new mdt::SearchEngine::RpcStoreRequest();
         if (SearchIndex(line, table_name, regex_req) >= 0) {
@@ -1212,12 +1267,18 @@ int LogStream::ParseMdtRequest(const std::string table_name,
         if (FLAGS_use_regex_index_pattern) {
             continue;
         }
+        end_ts = mdt::timer::get_micros();
+        VLOG(45) << "parse index " << i << ", table " << table_name << ", " << end_ts - start_ts;
+        start_ts = end_ts;
         mdt::SearchEngine::RpcStoreRequest* req = NULL;
         LogRecord log;
         if (log.SplitLogItem(line, string_delims_) < 0) {
             res = -1;
             VLOG(30) << "parse mdt request split by string fail: " << line;
         } else {
+            end_ts = mdt::timer::get_micros();
+            VLOG(45) << "parse index " << i << ", table " << table_name << ", " << end_ts - start_ts;
+            start_ts = end_ts;
             LogTailerSpan kv;
             for (int col_idx = 0; col_idx < (int)log.columns.size(); col_idx++) {
                 if (use_fixed_index_list_) {
@@ -1228,6 +1289,9 @@ int LogStream::ParseMdtRequest(const std::string table_name,
                 }
             }
 
+            end_ts = mdt::timer::get_micros();
+            VLOG(45) << "parse index " << i << ", table " << table_name << ", " << end_ts - start_ts;
+            start_ts = end_ts;
             req = new mdt::SearchEngine::RpcStoreRequest();
             req->set_db_name(module_name_);
             req->set_table_name(table_name);
@@ -1242,13 +1306,24 @@ int LogStream::ParseMdtRequest(const std::string table_name,
                     idx->set_key(it->second);
                 }
             }
+
+            end_ts = mdt::timer::get_micros();
+            VLOG(45) << "parse index " << i << ", table " << table_name << ", " << end_ts - start_ts;
+            start_ts = end_ts;
             // if primary key not set, use time
             if (req->primary_key() == "") {
                 struct timeval dummy_time;
                 //req->set_primary_key(TimeToStringWithTid(&dummy_time));
                 req->set_primary_key(GetUUID());
             }
+            end_ts = mdt::timer::get_micros();
+            VLOG(45) << "parse index " << i << ", table " << table_name << ", " << end_ts - start_ts;
+            start_ts = end_ts;
             req->set_data(line);
+
+            end_ts = mdt::timer::get_micros();
+            VLOG(45) << "parse index " << i << ", table " << table_name << ", " << end_ts - start_ts;
+            start_ts = end_ts;
             // user has time item in log
             it = kv.kv_annotation.find(user_time_);
             if (user_time_.size() && it != kv.kv_annotation.end()) {
@@ -1263,6 +1338,9 @@ int LogStream::ParseMdtRequest(const std::string table_name,
             }
         }
 
+        end_ts = mdt::timer::get_micros();
+        VLOG(45) << "parse index " << i << ", table " << table_name << ", " << end_ts - start_ts;
+        start_ts = end_ts;
         if (res >= 0) {
             req_vec->push_back(req);
         } else if (req) {
@@ -1274,7 +1352,6 @@ int LogStream::ParseMdtRequest(const std::string table_name,
 
 void LogStream::ApplyRedoList(FileStream* file_stream) {
     // redo check point
-    VLOG(30) << "use redo list: filename " << file_stream->GetFileName();
     std::map<uint64_t, uint64_t> redo_list;
     file_stream->GetRedoList(&redo_list);
     std::map<uint64_t, uint64_t>::iterator redo_it = redo_list.begin();

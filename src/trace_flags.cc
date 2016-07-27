@@ -40,6 +40,7 @@ DEFINE_int64(delay_retry_time, 2000, "in ms, time period after async push fail t
 
 DEFINE_bool(use_regex_index_pattern, true, "new regex index search");
 DEFINE_bool(enable_reclaim_ino, true, "reclaim ino and offset");
+DEFINE_bool(always_evict_oldfile, true, "agent's fd cache, always evict old file");
 
 ///////////////////////////////////////////
 // scheduler flags
