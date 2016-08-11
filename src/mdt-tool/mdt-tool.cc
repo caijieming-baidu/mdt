@@ -71,6 +71,9 @@ DEFINE_string(cmd_index_list, "", "key1,==,val1,key2,>=,val2");
 DEFINE_string(cmd_pkey_type, "kBytes", "primary key type");
 DEFINE_string(cmd_table_ttl, "", "table's value time to live");
 
+DEFINE_string(cmd_table_prop_key, "splitsize", "tera table's split size");
+DEFINE_string(cmd_table_prop_val, "512", "512M trigger split");
+
 DEFINE_string(cmd_monitor_flagfile, "../conf/monitor.conf", "json configure file");
 DEFINE_string(cmd_index_flagfile, "../conf/index.conf", "json configure file");
 
@@ -1904,6 +1907,14 @@ int main(int ac, char* av[]) {
             non_interactive_cmd_vec.push_back(FLAGS_cmd_db_name);
             non_interactive_cmd_vec.push_back(FLAGS_cmd_table_name);
             LeveldbDumpOp(non_interactive_cmd_vec);
+        } else if (FLAGS_cmd == "UpdateTable") {
+            // cmd: UpdateTable dbname tablename <table_prop_key> <tale_prop_value>
+            non_interactive_cmd_vec.push_back(FLAGS_cmd);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_db_name);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_table_name);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_table_prop_key);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_table_prop_val);
+            UpdateMdtTableProp(non_interactive_cmd_vec);
         } else {
             std::cout << "interactive mode, cmd " << FLAGS_cmd << " not know\n";
             HelpManue();

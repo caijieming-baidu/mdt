@@ -91,7 +91,7 @@ SchedulerImpl::SchedulerImpl()
     pthread_spin_init(&monitor_lock_, PTHREAD_PROCESS_PRIVATE);
 
     agent_thread_stop_ = false;
-    pthread_create(&collector_tid_, NULL, BgHandleAgentInfoWrapper, this);
+    pthread_create(&agent_tid_, NULL, BgHandleAgentInfoWrapper, this);
     collector_thread_stop_ = false;
     pthread_create(&collector_tid_, NULL, BgHandleCollectorInfoWrapper, this);
 }
@@ -639,7 +639,22 @@ void SchedulerImpl::DoRpcTraceGalaxyApp(boost::shared_ptr<TraceInfo> trace_info)
         trace_info->galaxy = galaxy;
     }
 
+    std::vector<::baidu::galaxy::JobInformation> jobs;
     std::vector<::baidu::galaxy::PodInformation> pods;
+    if (trace_info->galaxy->ListJobs(&jobs)) {
+        for (uint32_t ji = 0; ji < jobs.size(); ji++) {
+            std::vector<::baidu::galaxy::PodInformation> tmp_pods;
+            if (jobs[ji].job_name == trace_info->job_name) {
+                if (trace_info->galaxy->ShowPod(jobs[ji].job_id, &tmp_pods)) {
+                    for (uint32_t tmp_i = 0; tmp_i < tmp_pods.size(); tmp_i++) {
+                        pods.push_back(tmp_pods[tmp_i]);
+                    }
+                }
+            }
+        }
+    }
+#if 0
+    // TODO: galaxy, :(
     if (!trace_info->galaxy->GetPodsByName(trace_info->job_name, &pods)) {
         if (!trace_info->galaxy->ShowPod(trace_info->job_id, &pods)) {
             LOG(WARNING) << "galaxy get Pods error, " << trace_info->job_name;
@@ -654,6 +669,7 @@ void SchedulerImpl::DoRpcTraceGalaxyApp(boost::shared_ptr<TraceInfo> trace_info)
             return;
         }
     }
+#endif
 
     trace_info->ref.Inc();
     for (uint32_t i = 0; i < pods.size(); i++) {

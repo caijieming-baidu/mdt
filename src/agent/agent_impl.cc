@@ -35,6 +35,7 @@ DECLARE_string(db_dir);
 DECLARE_string(watch_log_dir);
 DECLARE_string(module_name_list);
 DECLARE_string(agent_service_port);
+DECLARE_bool(enable_add_oldfile);
 
 extern mdt::agent::EventMask event_masks[21];
 
@@ -556,8 +557,10 @@ int AgentImpl::AddWatchModuleStream(const std::string& module_name, const std::s
     }
     pthread_spin_unlock(&lock_);
 
-    // add old file
-    AddOldFile(log_name);
+    if (FLAGS_enable_add_oldfile) {
+        // add old file
+        AddOldFile(log_name);
+    }
     return 0;
 }
 void AgentImpl::AddOldFile(const std::string& filename) {

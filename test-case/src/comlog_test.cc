@@ -22,44 +22,45 @@ int main(int ac, char* av[]) {
         line_vec.push_back(line);
     }
 
+    unsigned long st = 1;
     while (1) {
         // 25KB per file
         for (unsigned int i = 0; i < line_vec.size(); i++) {
             com_writelog(COMLOG_NOTICE, "%s", line_vec[i].c_str());
         }
-        usleep(100000);
+        usleep(st);
         for (unsigned int i = 0; i < line_vec.size(); i++) {
             com_writelog(COMLOG_NOTICE, "%s", line_vec[i].c_str());
         }
-        usleep(100000);
+        usleep(st);
         for (unsigned int i = 0; i < line_vec.size(); i++) {
             com_writelog(COMLOG_NOTICE, "%s", line_vec[i].c_str());
         }
-        usleep(100000);
+        usleep(st);
         for (unsigned int i = 0; i < line_vec.size(); i++) {
             com_writelog(COMLOG_NOTICE, "%s", line_vec[i].c_str());
         }
-        usleep(100000);
+        usleep(st);
         for (unsigned int i = 0; i < line_vec.size(); i++) {
             com_writelog(COMLOG_NOTICE, "%s", line_vec[i].c_str());
         }
-        usleep(100000);
+        usleep(st);
         for (unsigned int i = 0; i < line_vec.size(); i++) {
             com_writelog(COMLOG_NOTICE, "%s", line_vec[i].c_str());
         }
-        usleep(100000);
+        usleep(st);
         for (unsigned int i = 0; i < line_vec.size(); i++) {
             com_writelog(COMLOG_NOTICE, "%s", line_vec[i].c_str());
         }
-        usleep(100000);
+        usleep(st);
         for (unsigned int i = 0; i < line_vec.size(); i++) {
             com_writelog(COMLOG_NOTICE, "%s", line_vec[i].c_str());
         }
-        usleep(100000);
+        usleep(st);
         for (unsigned int i = 0; i < line_vec.size(); i++) {
             com_writelog(COMLOG_NOTICE, "%s", line_vec[i].c_str());
         }
-        usleep(100000);
+        usleep(st);
     }
     return 0;
 }

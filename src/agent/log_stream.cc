@@ -60,6 +60,7 @@ DECLARE_int64(agent_max_fd_num);
 
 DECLARE_bool(use_regex_index_pattern);
 DECLARE_bool(enable_reclaim_ino);
+DECLARE_bool(enable_debug_agent);
 
 namespace mdt {
 namespace agent {
@@ -1430,9 +1431,14 @@ int LogStream::AsyncPush(std::vector<mdt::SearchEngine::RpcStoreRequest*>& req_v
                               bool, int)> callback =
             boost::bind(&LogStream::AsyncPushCallback,
                         this, _1, _2, _3, _4, service, key);
-        rpc_client_->AsyncCall(service,
-                              &mdt::SearchEngine::SearchEngineService_Stub::Store,
-                              req, resp, callback);
+        if (FLAGS_enable_debug_agent) {
+            AsyncPushCallback(req, resp, 0, 0, service, key);
+        } else {
+            rpc_client_->AsyncCall(service,
+                    &mdt::SearchEngine::SearchEngineService_Stub::Store,
+                    req, resp, callback);
+
+        }
     }
     return 0;
 }
