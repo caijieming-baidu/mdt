@@ -39,6 +39,7 @@ DECLARE_int32(agent_bandwidth_quota);
 DECLARE_int32(collector_timeout);
 DECLARE_int32(collector_max_error);
 DECLARE_int64(scheduler_galaxy_app_trace_period);
+DECLARE_int64(scheduler_max_alloc_qps);
 
 // mail
 DECLARE_int64(scheduler_mail_max_queue_size);
@@ -387,6 +388,9 @@ void SchedulerImpl::SelectAndUpdateCollector(AgentInfo info, std::string* select
                 ((collector_info.ctime + FLAGS_collector_timeout < ts) ||
                  (collector_info.error_nr <= FLAGS_collector_max_error))) {
             if (FLAGS_scheduler_use_qps_schedule) {
+                if (collector_info.qps + info.qps_use > FLAGS_scheduler_max_alloc_qps) {
+                    continue;
+                }
                 if (min_qps > collector_info.qps) {
                     min_qps = collector_info.qps;
                     min_it = collector_it;
@@ -405,6 +409,7 @@ void SchedulerImpl::SelectAndUpdateCollector(AgentInfo info, std::string* select
         if (min_qps != INT64_MAX) {
             CollectorInfo& min_info = min_it->second;
             min_info.nr_agents++;
+            min_info.qps += info.qps_use;
         }
     } else {
         if (min_nr_agent != INT64_MAX) {

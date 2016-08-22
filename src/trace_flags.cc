@@ -62,6 +62,7 @@ DEFINE_int64(scheduler_mail_delay, 5000, "delay (ms) time in send mail");
 
 DEFINE_int64(cache_size, 104857600, "leveldb block cache size");
 DEFINE_bool(scheduler_use_qps_schedule, true, "scheduler use qps for alloc collector");
+DEFINE_int64(scheduler_max_alloc_qps, 20000, "scheduler load balance, limit collector max qps alloc");
 
 ///////////////////////////////////////////
 // scheduler flags
