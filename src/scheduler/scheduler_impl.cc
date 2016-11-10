@@ -278,7 +278,7 @@ void SchedulerImpl::DoUpdateAgentInfo(::google::protobuf::RpcController* control
 
     // collector error too much, cause agent error and scheduler cpu's usage use too much
     if ((request->current_server_addr() != "") || (request->current_server_addr() != "nil")) {
-        if (agent_thread_.PendingNum() > 10) {
+        if (agent_thread_.PendingNum() > 100) {
             response->set_primary_server_addr(request->current_server_addr());
             done->Run();
             return;

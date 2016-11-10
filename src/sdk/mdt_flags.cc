@@ -30,6 +30,7 @@ DEFINE_bool(enable_async_index_write, true, "write data and async write index");
 DEFINE_int64(async_tera_writer_num, 20, "num of async index writer");
 DEFINE_bool(ignore_tera_write_error, false, "ignore tera write error");
 DEFINE_bool(sdk_disable_tera_ts_write, false, "disable tera timestamp write");
+DEFINE_int64(switch_file_time, 3600000000, "time force to switch file");
 
 // read ops param
 DEFINE_int64(read_file_thread_num, 50,  "num of read file threads");

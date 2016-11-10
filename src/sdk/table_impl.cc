@@ -42,6 +42,7 @@ DECLARE_bool(enable_async_index_write);
 DECLARE_int64(async_tera_writer_num);
 DECLARE_bool(ignore_tera_write_error);
 DECLARE_bool(sdk_disable_tera_ts_write);
+DECLARE_int64(switch_file_time);
 
 namespace mdt {
 static ThreadPool GLOBAL_read_row_data_threads(FLAGS_read_file_thread_num);
@@ -2624,7 +2625,7 @@ bool DataWriter::SwitchDataFile() {
     if (!shouldswitch) {
         int64_t nowts = timer::get_micros();
         int64_t filets = filetime_.tv_sec * 1000000 + filetime_.tv_usec;
-        if (nowts > filets + 3600000000) {
+        if (nowts > filets + FLAGS_switch_file_time) {
 	    VLOG(30) << "time switch file, nowts " << nowts << ", filetime " << filets;
             shouldswitch = true;
         }

@@ -127,6 +127,7 @@ void HelpManue() {
     printf("cmd: PushTraceLog <job_name> <work_dir> <user_log_dir> <db_name> <table_name> <parse_path_fn> <nexus_root_path> <master_path> <nexus_servers> \n\n");
     printf("cmd: SetMonitor <conf>\n\n");
     printf("cmd: LeveldbDump lpath Magic/CurrentOffset/CheckPoint/Content db_name\n\n");
+    printf("cmd: CompactTs <Terats>\n\n");
     printf("===========================\n");
 }
 
@@ -461,6 +462,68 @@ int DumpCacheOp(std::vector<std::string>& cmd_vec) {
     }
     for (int32_t i = 0; i < (int32_t)table_list.size(); i++) {
         pthread_join(tid_vec[i], NULL);
+    }
+    return 0;
+}
+
+int CompactTsOp(std::vector<std::string>& cmd_vec) {
+    // parse param
+    std::string ts_table = cmd_vec[1];
+    // new tera client
+    tera::ErrorCode error;
+    tera::Client* client = tera::Client::NewClient(FLAGS_tera_flagfile, "mdt", &error);
+    if (client == NULL) {
+        std::cout << "new tera::Client error\n";
+        return -1;
+    }
+    std::vector<tera::TabletInfo> tinfo;
+    if (!client->GetTabletLocation(ts_table, &tinfo, &error)) {
+        std::cout << "Get Location error\n";
+        return -1;
+    }
+
+    // tag delete
+    tera::Table* table = client->OpenTable(ts_table, &error);
+    for (unsigned int i = 0; i < tinfo.size(); i++) {
+        std::string key1 = tinfo[i].start_key;
+        std::string key2 = tinfo[i].end_key;
+        key1.push_back(0);
+        std::cout << "key1 ";
+        for (unsigned int x = 0; x < key1.size(); x++) {
+            std::cout << (int)key1[x] << " ";
+        }
+        std::cout << ", key2 ";
+        for (unsigned int x = 0; x < key2.size(); x++) {
+            std::cout << (int)key2[x] << " ";
+        }
+        std::cout << std::endl;
+        if (key2.size() > 0) {
+          unsigned int c = (unsigned int)key2[key2.size() - 1];
+          if (c > 0) {
+            key2.resize(key2.size() - 1);
+            key2.push_back(c - 1);
+          } else {
+            key2.resize(key2.size() - 1);
+          }
+        } else {
+          key2.push_back(255);
+        }
+        std::cout << "key1 ";
+        for (unsigned int x = 0; x < key1.size(); x++) {
+            std::cout << (int)key1[x] << " ";
+        }
+        std::cout << ", key2 ";
+        for (unsigned int x = 0; x < key2.size(); x++) {
+            std::cout << (int)key2[x] << " ";
+        }
+        std::cout << std::endl;
+        //continue;
+        tera::RowMutation* row1 = table->NewRowMutation(key1);
+        tera::RowMutation* row2 = table->NewRowMutation(key2);
+        row1->DeleteRow();
+        row2->DeleteRow();
+        table->ApplyMutation(row1);
+        table->ApplyMutation(row2);
     }
     return 0;
 }
@@ -1853,6 +1916,10 @@ int main(int ac, char* av[]) {
             non_interactive_cmd_vec.push_back(FLAGS_cmd);
             non_interactive_cmd_vec.push_back(FLAGS_cmd_index_flagfile);
             UpdateIndex(non_interactive_cmd_vec);
+        } else if (FLAGS_cmd == "CompactTs") {
+            non_interactive_cmd_vec.push_back(FLAGS_cmd);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_table_name);
+            CompactTsOp(non_interactive_cmd_vec);
         } else if (FLAGS_cmd == "GetByTime") {
             // cmd: GetByTime <dbname> <tablename> start(year-month-day-hour:min:sec) end(year-month-day-hour:min:sec) <limit>
             // key1,>=,value1,key2,==,value2
