@@ -71,6 +71,11 @@ DEFINE_string(cmd_index_list, "", "key1,==,val1,key2,>=,val2");
 DEFINE_string(cmd_pkey_type, "kBytes", "primary key type");
 DEFINE_string(cmd_table_ttl, "", "table's value time to live");
 
+DEFINE_string(cmd_lg, "lg", "tera table's lg");
+DEFINE_string(cmd_cf, "Location", "tera table's cf");
+DEFINE_string(cmd_cf_prop_key, "ttl", "tera table's cf prop key");
+DEFINE_string(cmd_cf_prop_val, "86400", "tera table's cf prop val");
+
 DEFINE_string(cmd_table_prop_key, "splitsize", "tera table's split size");
 DEFINE_string(cmd_table_prop_val, "512", "512M trigger split");
 
@@ -128,6 +133,9 @@ void HelpManue() {
     printf("cmd: SetMonitor <conf>\n\n");
     printf("cmd: LeveldbDump lpath Magic/CurrentOffset/CheckPoint/Content db_name\n\n");
     printf("cmd: CompactTs <Terats>\n\n");
+    printf("===========================\n");
+    printf("non  interacting : ./mdt-tool --cmd=UpdateCF --cmd_db_name=xxx --cmd_table_name=xxx --cmd_lg=lg --cmd_cf=['Location' or 'PrimaryKey'] "
+            "--cmd_cf_prop_key=[ttl,...] --cmd_cf_prop_val=xxx\n\n");
     printf("===========================\n");
 }
 
@@ -1982,6 +1990,15 @@ int main(int ac, char* av[]) {
             non_interactive_cmd_vec.push_back(FLAGS_cmd_table_prop_key);
             non_interactive_cmd_vec.push_back(FLAGS_cmd_table_prop_val);
             UpdateMdtTableProp(non_interactive_cmd_vec);
+        } else if (FLAGS_cmd == "UpdateCF") {
+            non_interactive_cmd_vec.push_back(FLAGS_cmd);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_db_name);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_table_name);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_lg);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_cf);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_cf_prop_key);
+            non_interactive_cmd_vec.push_back(FLAGS_cmd_cf_prop_val);
+            UpdateTableCF(non_interactive_cmd_vec);
         } else {
             std::cout << "interactive mode, cmd " << FLAGS_cmd << " not know\n";
             HelpManue();
