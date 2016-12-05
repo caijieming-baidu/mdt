@@ -127,6 +127,9 @@ cleanall:
 	$(MAKE) clean
 	rm -rf build
 
+hook: src/hook/hook.c
+	gcc -fPIC -shared -o hook.so src/hook/hook.c -lpthread -ldl	
+
 src/leveldb/libleveldb.a: FORCE
 	$(MAKE) -C src/leveldb
 

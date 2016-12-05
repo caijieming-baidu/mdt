@@ -433,7 +433,7 @@ int AgentImpl::DeleteWatchEvent(const std::string& logdir, const std::string& fi
     std::string module_name;
     //ParseModuleName(filename, &module_name);
     FilterFileByMoudle(filename, &module_name);
-    VLOG(35) << "delete event, module name " << module_name << ", log dir " << logdir;
+    VLOG(6) << "delete event, module name " << module_name << ", log dir " << logdir << ", file " << filename;
     if (module_name.size() == 0) {
         VLOG(35) << "dir " << filename << ", no module match";
         return -1;
@@ -466,7 +466,7 @@ void AgentImpl::DestroyWatchPath(FileSystemInotify* fs_inotify) {
     }
     if (fs_inotify->inotify_fd >= 0) {
         close(fs_inotify->inotify_fd);
-        VLOG(30) << "close inotify fd";
+        VLOG(6) << "inotify close fd" << fs_inotify->inotify_fd;
     }
     if (fs_inotify->inotify_FD) {
         fclose(fs_inotify->inotify_FD);
@@ -476,6 +476,14 @@ void AgentImpl::DestroyWatchPath(FileSystemInotify* fs_inotify) {
 }
 
 int AgentImpl::AddWatchPath(const std::string& dir) {
+    pthread_spin_lock(&lock_);
+    std::map<std::string, FileSystemInotify*>::iterator it = inotify_.find(dir);
+    if (it != inotify_.end()) {
+        pthread_spin_unlock(&lock_);
+        VLOG(6) << "dir " << dir << ", has been watch";
+        return -1;
+    }
+
     FileSystemInotify* fs_inotify = new FileSystemInotify;
     fs_inotify->log_dir = dir;
     fs_inotify->agent = this;
@@ -484,6 +492,8 @@ int AgentImpl::AddWatchPath(const std::string& dir) {
     if (fs_inotify->inotify_fd < 0) {
         VLOG(30) << "init inotify fd error";
         DestroyWatchPath(fs_inotify);
+
+        pthread_spin_unlock(&lock_);
         return -1;
     }
 
@@ -494,10 +504,14 @@ int AgentImpl::AddWatchPath(const std::string& dir) {
     fs_inotify->watch_fd = inotify_add_watch(fs_inotify->inotify_fd, dir.c_str(), fs_inotify->inotify_flag);
     if (fs_inotify->watch_fd < 0) {
         DestroyWatchPath(fs_inotify);
+
+        pthread_spin_unlock(&lock_);
         return -1;
     }
     if ((fs_inotify->inotify_FD = fdopen(fs_inotify->inotify_fd, "r")) == NULL) {
         DestroyWatchPath(fs_inotify);
+
+        pthread_spin_unlock(&lock_);
         return -1;
     }
 
@@ -509,22 +523,22 @@ int AgentImpl::AddWatchPath(const std::string& dir) {
     ::leveldb::Status s = log_options_.kMemDB->Put(::leveldb::WriteOptions(), mem_key, mem_val);
 #endif
 
-    VLOG(30) << "add watch addr " << dir << ", watch fd " << fs_inotify->watch_fd;
+    VLOG(6) << "add watch addr " << dir << ", watch open fd " << fs_inotify->watch_fd;
     fs_inotify->stop = false;
     pthread_create(&fs_inotify->tid, NULL, WatchThreadWrapper, fs_inotify);
 
+#if 0
     // add to management list
-    pthread_spin_lock(&lock_);
     std::map<std::string, FileSystemInotify*>::iterator it = inotify_.find(dir);
     if (it != inotify_.end()) {
-        pthread_spin_unlock(&lock_);
-
         DestroyWatchPath(fs_inotify);
-        VLOG(30) << "dir " << dir << ", has been watch";
+
+        pthread_spin_unlock(&lock_);
+        VLOG(6) << "dir " << dir << ", has been watch";
         return -1;
-    } else {
-        inotify_[dir] = fs_inotify;
     }
+#endif
+    inotify_[dir] = fs_inotify;
     pthread_spin_unlock(&lock_);
     return 0;
 }

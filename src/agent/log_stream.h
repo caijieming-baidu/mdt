@@ -190,6 +190,7 @@ private:
     void StreamMakeContextKey(const std::string& db_name, uint64_t ino, std::string* key,
                               uint64_t offset, uint64_t size, char* buf, std::string* val);
     void DeleteMagicAndOffset(uint64_t ino, const std::string& filename);
+    int64_t GetCurrentOffset(uint64_t ino, const std::string& filename);
     void StreamMakeCurrentOffsetKey(const std::string& module_name,
                               const std::string& filename,
                               uint64_t ino,
