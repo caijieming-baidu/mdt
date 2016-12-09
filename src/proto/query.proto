@@ -35,9 +35,14 @@ message RpcSearchRequest {
     optional int32 limit = 7;
 }
 
+message LogMeta {
+    repeated bytes key = 1;
+    repeated bytes val = 2;
+}
 message RpcResultStream {
     optional string primary_key = 1;
     repeated bytes data_list = 2;
+    repeated LogMeta meta_list = 3;
 }
 
 message RpcSearchResponse {

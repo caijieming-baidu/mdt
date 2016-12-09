@@ -314,6 +314,7 @@ int DatabaseImpl::AssembleTableSchema(const TableDescription& table_desc,
         index = schema->add_index_descriptor_list();
         index->set_index_name(it->index_name);
         index->set_index_key_type(it->index_key_type);
+        index->set_shuttle(it->shuttle);
         LOG(INFO) << "Assemble: index table name " << index->index_name();
     }
     return 0;
@@ -330,6 +331,7 @@ int DatabaseImpl::DisassembleTableSchema(const BigQueryTableSchema& schema,
         IndexDescription index_desc;
         index_desc.index_name = index_schema.index_name();
         index_desc.index_key_type = (TYPE)index_schema.index_key_type();
+        index_desc.shuttle = index_schema.shuttle();
         table_desc->index_descriptor_list.push_back(index_desc);
         LOG(INFO) << "Disassemble: index table name " << index_desc.index_name;
     }

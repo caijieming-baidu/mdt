@@ -286,6 +286,8 @@ private:
     static void* GarbageCleanThreadWrapper(void* arg);
     void GarbageClean();
 
+    bool GetIndexShuttle(const std::string& index);
+
 private:
     // NOTE： WriteHandle can not operator in race condition
     struct WriteHandle {

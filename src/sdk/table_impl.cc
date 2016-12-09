@@ -4,6 +4,7 @@
 
 #include <deque>
 #include <sstream>
+#include <uuid/uuid.h>
 
 #include <boost/bind.hpp>
 #include <glog/logging.h>
@@ -982,10 +983,19 @@ int TableImpl::WriteBatchIndexTable(const std::string& primary_key, uint64_t tim
             iter->Next();
             continue;
         }
-
+        // key or key+uuid
+        std::string index_value = value.ToString();
+        if (GetIndexShuttle(key.ToString())) {
+          char buf[36];
+          uuid_t uid;
+          uuid_generate(uid);
+          uuid_unparse(uid, buf);
+          std::string s = buf;
+          index_value.append(s);
+        }
         VLOG(12) << " write index table: " << key.ToString()
-            << ", typed_index_key " << DebugString(value.ToString());
-        tera::RowMutation* index_row = index_table->NewRowMutation(value.ToString());
+            << ", typed_index_key " << DebugString(index_value);
+        tera::RowMutation* index_row = index_table->NewRowMutation(index_value);
         context->row_table_map[((uint64_t)(index_row))] = (uint64_t)(index_table);
         index_row->Put(kIndexTableColumnFamily, time_primay_key, timestamp, null_value);
         index_row->SetContext(context);
@@ -1013,7 +1023,15 @@ int TableImpl::WriteBatchIndexTable(const std::string& primary_key, uint64_t tim
     }
 
     return 0;
-
+}
+bool TableImpl::GetIndexShuttle(const std::string& index) {
+    std::vector<struct IndexDescription>::iterator it = table_desc_.index_descriptor_list.begin();
+    for (; it != table_desc_.index_descriptor_list.end(); ++it) {
+        if (it->index_name == index) {
+            return it->shuttle;
+        }
+    }
+    return false;
 }
 
 Status TableImpl::StringToTypeString(const std::string& index_table,
@@ -1326,13 +1344,18 @@ Status TableImpl::GetByExtendIndex(const std::vector<IndexConditionExtend>& inde
             VLOG(12) << "index table " << index_name << " not exit";
             continue;
         }
+        bool shuttle = GetIndexShuttle(index_name);
 
         VLOG(10) << "select op, create scan stream of index: " << index_name;
         tera::ScanDescriptor* scan_desc = NULL;
         switch ((int)index_cond_ex.comparator) {
         case kEqualTo:
             scan_desc = new tera::ScanDescriptor(index_cond_ex.compare_value1);
-            scan_desc->SetEnd(index_cond_ex.compare_value1 + '\0');
+            if (shuttle) {
+              scan_desc->SetEnd(index_cond_ex.compare_value1 + '\255');
+            } else {
+              scan_desc->SetEnd(index_cond_ex.compare_value1 + '\0');
+            }
             VLOG(30) << "select val = " << index_cond_ex.compare_value1;
             break;
         case kNotEqualTo:
@@ -1345,10 +1368,18 @@ Status TableImpl::GetByExtendIndex(const std::vector<IndexConditionExtend>& inde
             break;
         case kLessEqual:
             scan_desc = new tera::ScanDescriptor("");
-            scan_desc->SetEnd(index_cond_ex.compare_value1 + '\0');
+            if (shuttle) {
+              scan_desc->SetEnd(index_cond_ex.compare_value1 + '\255');
+            } else {
+              scan_desc->SetEnd(index_cond_ex.compare_value1 + '\0');
+            }
             break;
         case kGreater:
-            scan_desc = new tera::ScanDescriptor(index_cond_ex.compare_value1 + '\0');
+            if (shuttle) {
+              scan_desc = new tera::ScanDescriptor(index_cond_ex.compare_value1 + '\255');
+            } else {
+              scan_desc = new tera::ScanDescriptor(index_cond_ex.compare_value1 + '\0');
+            }
             scan_desc->SetEnd("");
             break;
         case kGreaterEqual:
@@ -1359,10 +1390,18 @@ Status TableImpl::GetByExtendIndex(const std::vector<IndexConditionExtend>& inde
             if (index_cond_ex.flag1) {
                 scan_desc = new tera::ScanDescriptor(index_cond_ex.compare_value1);
             } else {
-                scan_desc = new tera::ScanDescriptor(index_cond_ex.compare_value1 + '\0');
+                if (shuttle) {
+                    scan_desc = new tera::ScanDescriptor(index_cond_ex.compare_value1 + '\255');
+                } else {
+                    scan_desc = new tera::ScanDescriptor(index_cond_ex.compare_value1 + '\0');
+                }
             }
             if (index_cond_ex.flag2) {
-                scan_desc->SetEnd(index_cond_ex.compare_value2 + '\0');
+                if (shuttle) {
+                  scan_desc->SetEnd(index_cond_ex.compare_value2 + '\255');
+                } else {
+                  scan_desc->SetEnd(index_cond_ex.compare_value2 + '\0');
+                }
             } else {
                 scan_desc->SetEnd(index_cond_ex.compare_value2);
             }

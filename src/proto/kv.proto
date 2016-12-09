@@ -5,6 +5,7 @@ option cc_generic_services = true;
 message IndexSchema {
     optional string index_name  = 1;
     optional uint32 index_key_type = 2;
+    optional bool shuttle = 3 [default = true] ;
 }
 
 message BigQueryTableSchema {
@@ -13,4 +14,3 @@ message BigQueryTableSchema {
     optional uint32 primary_key_type = 2;
     repeated IndexSchema index_descriptor_list = 3;
 }
-

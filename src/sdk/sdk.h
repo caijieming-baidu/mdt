@@ -139,6 +139,8 @@ enum TYPE {
 struct IndexDescription {
     std::string index_name;
     enum TYPE index_key_type;
+    bool shuttle;
+    IndexDescription(): shuttle(true) {}
 };
 
 // 数据类描述
