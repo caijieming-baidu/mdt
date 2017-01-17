@@ -160,8 +160,8 @@ Status DatabaseImpl::Init() {
     LOG(INFO) << "open schema table, table name " << schema_table_name <<
         ", addr " << tera_opt_.schema_table_ << ", error code " << tera::strerr(error_code);
     if (tera_opt_.schema_table_ == NULL) {
-        delete tera_opt_.client_;
-        tera_opt_.client_ = NULL;
+        //delete tera_opt_.client_;
+        //tera_opt_.client_ = NULL;
         LOG(INFO) << "open db, schema open error, schema table "
             << schema_table_name;
         return Status::IOError("schema table open error");
@@ -173,6 +173,7 @@ Status DatabaseImpl::Init() {
 }
 
 DatabaseImpl::~DatabaseImpl() {
+#if 0
     ReleaseTables();
     if (tera_opt_.schema_table_) {
       delete tera_opt_.schema_table_;
@@ -182,6 +183,7 @@ DatabaseImpl::~DatabaseImpl() {
       delete tera_opt_.client_;
       tera_opt_.client_ = NULL;
     }
+#endif
 }
 
 Status DatabaseImpl::CreateTable(const TableDescription& table_desc) {

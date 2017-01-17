@@ -364,7 +364,7 @@ std::string GetUUID() {
     return s;
 }
 void UUid_test() {
-    for (int i = 0; i < 1000; i++) {
+    for (int i = 0; i < 10; i++) {
         std::string s = GetUUID();
         std::cout << "uuid: " << s << std::endl;
     }
@@ -486,9 +486,17 @@ void TestInode2() {
 }
 
 void ParseLineTest() {
-    std::string line_vec = "\nsssssssssssssssss\nbbbbbbb\ncccccccccccccccccccc\nxxxxxxxxxxx\n";
+    std::string line_vec;
+    line_vec.append("sssssssssssssssss");
+    line_vec.append(1, '\n');
+    line_vec.append("cccccccccccc");
+    line_vec.append(1, '\0');
+    line_vec.append("xxxxxxxxxxxxx");
     std::vector<std::string> lines;
-    boost::split(lines, line_vec, boost::is_any_of("\n"));
+    std::string ld;
+    ld.append(1,'\0');
+    ld.append(1,'\n');
+    boost::split(lines, line_vec, boost::is_any_of(ld));
     for (uint32_t i = 0; i < lines.size(); i++) {
         std::cout << "LINE: " << lines[i] << std::endl;
     }
@@ -508,6 +516,27 @@ void RandTest() {
     std::cout << "rand sleep " << sleep_duration << " us\n";
 }
 
+void TestMetrix() {
+    int fd = open("ks_time.log", O_RDONLY);
+    if (fd < 0) {
+        std::cout << "ks_time.log not found\n";
+        return;
+    }
+    char buf[65536];
+    ssize_t sz = pread(fd, buf, 65536, 0);
+    close(fd);
+
+    std::vector<std::string> lines;
+    std::string line = buf;
+    std::string ld;
+    //ld.append(1,'\0');
+    ld.append(1,'\n');
+    boost::split(lines, line, boost::is_any_of(ld));
+    for (uint32_t i = 0; i < lines.size(); i++) {
+        std::cout << "LINE: " << lines[i] << std::endl;
+    }
+}
+
 // ./dump_file --flagfile=../conf/mdt.flag --op=create --index_list=passuid,mobile --dbname=TEST_db --tablename=TEST_table001
 // ./dump_file --flagfile=../conf/mdt.flag --op=dumpfile --primary_key=id --index_list=passuid,mobile --dbname=TEST_db --tablename=TEST_table001 --logfile=xxxx.dat
 // ./dump_file --flagfile=../conf/mdt.flag --op=get_index --logfile=xxxx.dat
@@ -524,6 +553,7 @@ int main(int ac, char* av[])
     TestInode2();
     ParseLineTest();
     RandTest();
+    TestMetrix();
 
     // send mail
     std::string to = "caijieming@baidu.com";

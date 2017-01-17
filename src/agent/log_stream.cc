@@ -677,9 +677,9 @@ void LogStream::Run() {
 
             // delete or reschedule write
             if (need_del || fsize <= GetCurrentOffset(ino, filename)) {
-                DeleteMagicAndOffset(ino, filename);
+                //DeleteMagicAndOffset(ino, filename);
             } else {
-                AddWriteEvent(filename, ino);
+                //AddWriteEvent(filename, ino);
             }
         }
 
@@ -2398,7 +2398,11 @@ ssize_t FileStream::ParseLine(char* buf, ssize_t size, std::vector<std::string>*
     ssize_t res = 0;
     int nr_lines = 0;
     std::string str(buf, size);
-    boost::split((*line_vec), str, boost::is_any_of("\n"));
+    std::string ld;
+    ld.append(1,'\0');
+    ld.append(1,'\n');
+    ld.append(1,'\r');
+    boost::split((*line_vec), str, boost::is_any_of(ld));
     nr_lines = line_vec->size();
     VLOG(30) << "parse line, nr of line " << nr_lines;
     bool half_line = false;
@@ -2408,7 +2412,7 @@ ssize_t FileStream::ParseLine(char* buf, ssize_t size, std::vector<std::string>*
     if ((*line_vec)[nr_lines - 1].size() == 0) {
         // full line case : aaaaaaaaaaaa\nbbbbbbbbbb\nccccccccccccccccc\n
         line_vec->pop_back();
-    } else if (buf[size -1] != '\n') {
+    } else if (buf[size -1] != '\n' || buf[size -1] != '\0' || buf[size -1] != '\r') {
         // half line case : aaaaaaaaaaaa\nbbbbbbbbbb\nccccccccccccccccc
         half_line = true;
         if (!read_half_line) {

@@ -66,7 +66,7 @@ void* BgHandleAgentInfoWrapper(void* arg) {
 }
 
 SchedulerImpl::SchedulerImpl()
-    : agent_thread_(50),
+    : agent_thread_(30),
     collector_thread_(4),
     ctrl_thread_(10),
     galaxy_trace_pool_(30),
@@ -277,13 +277,15 @@ void SchedulerImpl::DoUpdateAgentInfo(::google::protobuf::RpcController* control
     }
 
     // collector error too much, cause agent error and scheduler cpu's usage use too much
+#if 0
     if ((request->current_server_addr() != "") || (request->current_server_addr() != "nil")) {
-        if (agent_thread_.PendingNum() > 100) {
+        if (agent_thread_.PendingNum() > 10000) {
             response->set_primary_server_addr(request->current_server_addr());
             done->Run();
             return;
         }
     }
+#endif
 
     pthread_spin_lock(&agent_lock_);
     std::map<std::string, AgentInfo>::iterator it = agent_map_.find(request->agent_addr());

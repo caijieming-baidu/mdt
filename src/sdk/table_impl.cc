@@ -1293,19 +1293,19 @@ Status TableImpl::ExtendIndexCondition(const std::vector<IndexCondition>& index_
             if (index_cond_ex.comparator != kGreater && index_cond_ex.comparator != kGreaterEqual) {
                 return Status::InvalidArgument("");
             }
-            index_cond_ex.comparator = (COMPARATOR)kBetween;
             index_cond_ex.compare_value2 = index_cond.compare_value;
             index_cond_ex.flag1 = (index_cond_ex.comparator == kGreaterEqual);
             index_cond_ex.flag2 = (index_cond.comparator == kLessEqual);
+            index_cond_ex.comparator = (COMPARATOR)kBetween;
         } else if (index_cond.comparator == kGreater || index_cond.comparator == kGreaterEqual) {
             if (index_cond_ex.comparator != kLess && index_cond_ex.comparator != kLessEqual) {
                 return Status::InvalidArgument("");
             }
-            index_cond_ex.comparator = (COMPARATOR)kBetween;
             index_cond_ex.compare_value2 = index_cond_ex.compare_value1;
             index_cond_ex.compare_value1 = index_cond.compare_value;
             index_cond_ex.flag1 = (index_cond.comparator == kGreaterEqual);
             index_cond_ex.flag2 = (index_cond_ex.comparator == kLessEqual);
+            index_cond_ex.comparator = (COMPARATOR)kBetween;
         } else {
             // invalid param
             return Status::InvalidArgument("");

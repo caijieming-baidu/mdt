@@ -101,7 +101,7 @@ static inline int64_t get_micros() {
     return static_cast<int64_t>(tv.tv_sec) * 1000000 + tv.tv_usec;
 }
 
-            // GetByTime dbname tablename start(year-month-day-hour:min:sec)  end(year-month-day-hour:min:sec) limit [index_table [>,>=,==,<,<=] key]
+// GetByTime dbname tablename start(year-month-day-hour:min:sec)  end(year-month-day-hour:min:sec) limit [index_table [>,>=,==,<,<=] key]
 void HelpManue() {
     printf("========= usage ===========\n");
     printf("cmd: quit\n\n");
@@ -1948,7 +1948,7 @@ int main(int ac, char* av[]) {
                 }
             }
             GetByTimeOp(non_interactive_cmd_vec);
-            exit(0);
+            sleep(3);
         } else if (FLAGS_cmd == "CreateTable") {
             //printf("cmd: CreateTable <dbname> <tablename> <primary_key_type> <table_ttl> "
             //    "[<index_table> <index_type=kBytes,kUInt64>]\n\n");
