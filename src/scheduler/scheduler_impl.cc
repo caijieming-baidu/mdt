@@ -888,7 +888,7 @@ void SchedulerImpl::RpcTraceGalaxyApp(::google::protobuf::RpcController* control
     pthread_spin_unlock(&galaxy_trace_lock_);
 
     if (need_queue_task) {
-        if (request->parse_path_fn() == 3) {
+        if (request->parse_path_fn() == 3 || request->parse_path_fn() == 4) {
             VLOG(50) << "queue trace app request: " << trace_info->job_name << ", configure: " << trace_info->configure.DebugString();
             ThreadPool::Task task = boost::bind(&SchedulerImpl::DoRpcTraceGalaxy3App, this, trace_info);
             galaxy_trace_pool_.AddTask(task);

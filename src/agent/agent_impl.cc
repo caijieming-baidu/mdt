@@ -736,7 +736,7 @@ void AgentImpl::RpcTraceGalaxyApp(::google::protobuf::RpcController* controller,
         }
         done->Run();
         return;
-    } else if (request->parse_path_fn() == 3) {
+    } else if (request->parse_path_fn() == 3) { // row deploy, get path from bns
         std::string g3_path;
         g3_path.append(request->deploy_path());
         g3_path.append("/");
@@ -760,9 +760,88 @@ void AgentImpl::RpcTraceGalaxyApp(::google::protobuf::RpcController* controller,
         }
         done->Run();
         return;
+    } else if (request->parse_path_fn() == 4) { // deploy in galaxy3
+        bool is_success = true;
+        std::string deploy_path = request->deploy_path();
+        std::string s1("/home/galaxy3/agent/work_dir");
+        std::string pod_path;
+        if (deploy_path.size() >= s1.size() && (s1 == deploy_path.substr(0, s1.size()))) {
+            pod_path = deploy_path.substr(s1.size(), deploy_path.size() - s1.size());
+
+            std::string g_path = "/galaxy/home";
+            DIR* dir_ptr = opendir(g_path.c_str());
+            if (dir_ptr == NULL) {
+                response->set_status(mdt::LogAgentService::kRpcError);
+                done->Run();
+                return;
+            }
+            struct dirent* dir_entry = NULL;
+            while ((dir_entry = readdir(dir_ptr)) != NULL) {
+                std::string diskname(dir_entry->d_name, strlen(dir_entry->d_name));
+                if (diskname.find("disk") == std::string::npos) {
+                    continue;
+                }
+                std::string task_path(g_path);
+                task_path.append("/");
+                task_path.append(diskname);
+                task_path.append("/galaxy/");
+                task_path.append(pod_path);
+                task_path.append("/");
+                task_path.append(request->user_log_dir());
+                VLOG(30) << "try add path " << task_path;
+                struct stat st;
+                if (stat(task_path.c_str(), &st) != 0) {
+                    continue;
+                }
+                // add watch path
+                if (AddWatchPath(task_path) < 0) {
+                  is_success = false;
+                  VLOG(30) << "add watch event in dir " << task_path << " failed";
+                }
+                if (is_success && AddWatchModuleStream(request->db_name(), request->table_name()) < 0) {
+                  is_success = false;
+                  VLOG(35) << "add watch module " << request->db_name() << " failed, log file " << request->table_name();
+                }
+            }
+            closedir(dir_ptr);
+
+            if (is_success) {
+              response->set_status(mdt::LogAgentService::kRpcOk);
+            } else {
+              response->set_status(mdt::LogAgentService::kRpcError);
+            }
+            done->Run();
+            return;
+        }
+
+        // because agent deploy in galaxy3, so add /galaxy/ + deply_path + / + user log
+        std::string g3_path;
+        g3_path.append("/galaxy/");
+        g3_path.append(request->deploy_path());
+        g3_path.append("/");
+        g3_path.append(request->user_log_dir());
+        VLOG(30) << "try add path " << g3_path;
+
+        // add watch path
+        if (AddWatchPath(g3_path) < 0) {
+            is_success = false;
+            VLOG(30) << "add watch event in dir " << g3_path << " failed";
+        }
+        if (is_success && AddWatchModuleStream(request->db_name(), request->table_name()) < 0) {
+            is_success = false;
+            VLOG(35) << "add watch module " << request->db_name() << " failed, log file " << request->table_name();
+        }
+
+        if (is_success) {
+            response->set_status(mdt::LogAgentService::kRpcOk);
+        } else {
+            response->set_status(mdt::LogAgentService::kRpcError);
+        }
+        done->Run();
+        return;
     }
 
-    // get task work path
+    // get task work path, galaxy2
     std::string path;
     path.append("/");
     path.append(request->work_dir());
