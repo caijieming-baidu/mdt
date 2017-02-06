@@ -1708,6 +1708,9 @@ int ShowCollector(std::vector<std::string>& cmd_vec) {
     return 0;
 }
 
+// parse_path_fn =1, for galaxy2;
+//               =2, for full path;
+//               =3, for galaxy3
 // cmd: PushTraceLog <job_name> <work_dir> <user_log_dir> <db_name> <table_name> <parse_path_fn> <nexus_root_path> <master_path> <nexus_servers>
 int PushTraceLog(std::vector<std::string>& cmd_vec) {
     std::string job_name = cmd_vec[1];

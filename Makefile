@@ -21,7 +21,7 @@ PLATFORM_SHARED_VERSIONED=true
 SHARED_CFLAGS = -fPIC 
 SHARED_LDFLAGS = -shared -Wl,-soname -Wl, 
 
-INCPATH += -I./src/leveldb -I./src/leveldb/include -I./src -I./include $(DEPS_INCPATH) 
+INCPATH += -I./src/leveldb -I./src/leveldb/include -I./src -I./include $(DEPS_INCPATH) $(BNS_INCDIR)
 #### CFLAGS += -std=c99 $(OPT) $(SHARED_CFLAGS) $(INCPATH) $(PLATFORM_CCFLAGS) 
 CFLAGS += $(OPT) $(SHARED_CFLAGS) $(INCPATH) $(PLATFORM_CCFLAGS) 
 CXXFLAGS += $(OPT) $(DEPS_LDPATH) $(DEPS_LDFLAGS) $(SHARED_CFLAGS) $(INCPATH) $(PLATFORM_CXXFLAGS) 
@@ -176,7 +176,7 @@ collector_main: $(COLLECTOR_OBJ) $(LIBRARY) $(OTHER_OBJ) $(LEVELDB_LIB)
 	$(CXX) -o collector_main $(COLLECTOR_OBJ) $(LIBRARY) $(OTHER_OBJ) $(LDFLAGS) $(LEVELDB_LIB)
 
 scheduler_main: $(SCHEDULER_OBJ) $(PROTO_OBJ) $(VERSION_OBJ) $(OTHER_OBJ) $(LEVELDB_LIB) $(MAIL_OBJ)
-	$(CXX) -o scheduler_main $(SCHEDULER_OBJ) $(PROTO_OBJ) $(VERSION_OBJ) $(OTHER_OBJ) $(LDFLAGS) $(LEVELDB_LIB) $(MAIL_OBJ)
+	$(CXX) -o scheduler_main $(SCHEDULER_OBJ) $(PROTO_OBJ) $(VERSION_OBJ) $(OTHER_OBJ) $(LDFLAGS) $(LEVELDB_LIB) $(MAIL_OBJ) $(BNS_LIBRARIES)
 
 $(CXX_OBJ): %.o: %.cc $(PROTO_OUT_H) $(LEVELDB_LIB) 
 	$(CXX) $(CXXFLAGS)  -c $< -o $@ $(LEVELDB_LIB) 

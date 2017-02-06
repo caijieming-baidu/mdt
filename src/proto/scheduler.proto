@@ -105,8 +105,8 @@ message RpcTraceGalaxyAppRequest {
     optional string nexus_root_path = 7; 
     optional string master_path = 8;
     optional string nexus_servers = 9;
-
-    optional int64 parse_path_fn = 10; // fn = 1; fn = 2;
+  
+    optional int64 parse_path_fn = 10; // fn = 1; fn = 2; fn =3, for g3
 }
 message RpcTraceGalaxyAppResponse {
     optional RpcResponseStatus status = 1; 

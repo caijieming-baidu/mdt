@@ -177,6 +177,13 @@ private:
                 boost::shared_ptr<TraceInfo> trace_info);
     void DoRpcTraceGalaxyApp(boost::shared_ptr<TraceInfo> trace_info);
 
+    void AsyncTraceGalaxy3AppCallback(const mdt::LogAgentService::RpcTraceGalaxyAppRequest* req,
+                mdt::LogAgentService::RpcTraceGalaxyAppResponse* resp,
+                bool failed, int error,
+                mdt::LogAgentService::LogAgentService_Stub* service,
+                boost::shared_ptr<TraceInfo> trace_info);
+    void DoRpcTraceGalaxy3App(boost::shared_ptr<TraceInfo> trace_info);
+
     void DoRegisterNode(::google::protobuf::RpcController* controller,
                                        const mdt::LogSchedulerService::RegisterNodeRequest* request,
                                        mdt::LogSchedulerService::RegisterNodeResponse* response,

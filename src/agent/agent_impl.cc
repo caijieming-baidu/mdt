@@ -736,6 +736,30 @@ void AgentImpl::RpcTraceGalaxyApp(::google::protobuf::RpcController* controller,
         }
         done->Run();
         return;
+    } else if (request->parse_path_fn() == 3) {
+        std::string g3_path;
+        g3_path.append(request->deploy_path());
+        g3_path.append("/");
+        g3_path.append(request->user_log_dir());
+
+        bool is_success = true;
+        // add watch path
+        if (AddWatchPath(g3_path) < 0) {
+            is_success = false;
+            VLOG(30) << "add watch event in dir " << g3_path << " failed";
+        }
+        if (is_success && AddWatchModuleStream(request->db_name(), request->table_name()) < 0) {
+            is_success = false;
+            VLOG(35) << "add watch module " << request->db_name() << " failed, log file " << request->table_name();
+        }
+
+        if (is_success) {
+            response->set_status(mdt::LogAgentService::kRpcOk);
+        } else {
+            response->set_status(mdt::LogAgentService::kRpcError);
+        }
+        done->Run();
+        return;
     }
 
     // get task work path

@@ -19,6 +19,10 @@ TERA_PREFIX=thirdparty
 GALAXY_PREFIX=thirdparty
 COMMON_PREFIX=thirdparty
 
+BSL_PREFIX=thirdparty/bsl
+ULLIB_PREFIX=thirdparty/ullib
+NAMEING_PREFIX=thirdparty/nameing-lib
+
 SOFA_PBRPC_INCDIR = $(SOFA_PBRPC_PREFIX)/include
 PROTOBUF_INCDIR = $(PROTOBUF_PREFIX)/include
 SNAPPY_INCDIR = $(SNAPPY_PREFIX)/include
@@ -30,6 +34,10 @@ GPERFTOOLS_INCDIR = $(GPERFTOOLS_PREFIX)/include
 INS_INCDIR = $(INS_PREFIX)/include
 TERA_INCDIR = $(TERA_PREFIX)/include
 GALAXY_INCDIR = $(GALAXY_PREFIX)/include
+
+BSL_INCDIR = $(BSL_PREFIX)/include
+ULLIB_INCDIR = $(ULLIB_PREFIX)/include
+NAMEING_INCDIR = $(NAMEING_PREFIX)/include
 
 BOOST_LIBDIR=$(BOOST_INCDIR)/stage/lib
 SOFA_PBRPC_LIBDIR = $(SOFA_PBRPC_PREFIX)/lib
@@ -44,6 +52,10 @@ INS_LIBDIR = $(INS_PREFIX)/lib
 TERA_LIBDIR = $(TERA_PREFIX)/lib
 GALAXY_LIBDIR = $(GALAXY_PREFIX)/lib
 COMMON_LIBDIR = $(COMMON_PREFIX)/lib
+
+BSL_LIBDIR = $(BSL_PREFIX)/lib
+ULLIB_LIBDIR = $(ULLIB_PREFIX)/lib
+NAMEING_LIBDIR = $(NAMEING_PREFIX)/lib
 
 PROTOC = $(PROTOBUF_PREFIX)/bin/protoc
 
@@ -69,4 +81,9 @@ DEPS_LIBRARIES = $(COMMON_LIBDIR)/libcommon.a $(GALAXY_LIBDIR)/libgalaxy.a $(TER
                  $(GTEST_LIBDIR)/libgtest_main.a $(GTEST_LIBDIR)/libgtest.a \
                  $(GLOG_LIBDIR)/libglog.a $(GFLAGS_LIBDIR)/libgflags.a $(GPERFTOOLS_LIBDIR)/libtcmalloc_minimal.a \
 		 $(BOOST_LIBDIR)/libboost_regex.a
+
+BNS_INCDIR = -I$(BSL_INCDIR) -I$(ULLIB_INCDIR) -I$(NAMEING_INCDIR) -I$(PROTOBUF_INCDIR)
+BNS_LIBDIR = -L$(BSL_LIBDIR) -L$(ULLIB_LIBDIR) -L$(NAMEING_LIBDIR) -L$(PROTOBUF_LIBDIR)
+BNS_LDFLAGS = -lbsl -lullib -lwebfoot_naming -lprotobuf
+BNS_LIBRARIES = -Xlinker "-(" $(BNS_LIBDIR) $(BNS_LDFLAGS) -Xlinker "-)"
 

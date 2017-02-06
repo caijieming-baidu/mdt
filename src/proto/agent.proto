@@ -101,7 +101,10 @@ message RpcTraceGalaxyAppRequest {
     optional string db_name = 5; // module name
     optional string table_name = 6; // log file name prefix
     
-    optional int64 parse_path_fn = 10; // fn = 1; fn = 2: work_dir=ni, user_log_dir=full path;
+    // g3 deploy path, bns path 
+    optional string deploy_path = 7; // deploy_path + user_log_path
+     
+    optional int64 parse_path_fn = 10; // fn = 1; fn = 2: work_dir=ni, user_log_dir=full path;, fn = 3, for g3
 }
 message RpcTraceGalaxyAppResponse {
     optional RpcResponseStatus status = 1; 
