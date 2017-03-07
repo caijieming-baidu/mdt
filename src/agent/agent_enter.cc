@@ -7,6 +7,7 @@
 
 #include <gflags/gflags.h>
 #include <glog/logging.h>
+#include <gperftools/profiler.h>
 #include <sofa/pbrpc/pbrpc.h>
 #include <tera.h>
 
@@ -14,6 +15,7 @@
 
 DECLARE_string(agent_service_port);
 DECLARE_string(log_dir);
+DECLARE_string(agent_profiler_dir);
 
 void SetupLog(const std::string& name) {
     std::string program_name = "mdt";
@@ -63,15 +65,25 @@ void SetupGoogleLog() {
 int main(int ac, char* av[]) {
     ::google::ParseCommandLineFlags(&ac, &av, true);
     SetupGoogleLog();
+    std::string pfile = FLAGS_agent_profiler_dir;
+    if (pfile.size() > 0) {
+        ProfilerStart(pfile.c_str());
+    }
 
     // run agent
     mdt::agent::AgentImpl* agent = new mdt::agent::AgentImpl();
     if (agent == NULL) {
         std::cout << "can not new log agent\n";
+        if (pfile.size() > 0) {
+            ProfilerStop();
+        }
         exit(-1);
     }
     if (agent->Init() < 0) {
         std::cout << "agent init error\n";
+        if (pfile.size() > 0) {
+            ProfilerStop();
+        }
         exit(-1);
     }
 
@@ -79,13 +91,22 @@ int main(int ac, char* av[]) {
     ::sofa::pbrpc::RpcServerOptions options;
     ::sofa::pbrpc::RpcServer rpc_server(options);
     if (!rpc_server.RegisterService(agent)) {
+        if (pfile.size() > 0) {
+            ProfilerStop();
+        }
         return -1;
     }
     std::string hostip = std::string("0.0.0.0:") + FLAGS_agent_service_port;
     if (!rpc_server.Start(hostip)) {
+        if (pfile.size() > 0) {
+            ProfilerStop();
+        }
         return -1;
     }
     rpc_server.Run();
+    if (pfile.size() > 0) {
+        ProfilerStop();
+    }
     return 0;
 }
 

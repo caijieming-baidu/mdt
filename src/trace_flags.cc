@@ -17,6 +17,7 @@ DEFINE_string(primary_key, "", "primary key name");
 DEFINE_string(user_time, "", "user point out which field use as timestamp");
 DEFINE_int32(time_type, 1, "use for parse user time from log");
 DEFINE_int64(agent_max_fd_num, 30, "max fd can be hold in log agent");
+DEFINE_string(agent_profiler_dir, "", "set agent's profiler file dir");
 
 // support line filter
 DEFINE_string(string_line_filter_list, "", "support line filter, like: cn_garbage_main,diff_garbage_main");
