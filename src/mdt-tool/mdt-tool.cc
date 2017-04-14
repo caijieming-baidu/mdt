@@ -2012,6 +2012,9 @@ int main(int ac, char* av[]) {
 
     while (1) {
         char *line = readline("mdt:");
+        if (line == NULL) {
+            continue;
+        }
         char *cmd = StripWhite(line);
         std::string command(cmd, strlen(cmd));
 

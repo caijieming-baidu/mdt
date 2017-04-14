@@ -33,6 +33,7 @@
 #include "proto/scheduler.pb.h"
 #include "utils/coding.h"
 
+DECLARE_int64(cpu_precentage_use);
 DECLARE_string(agent_service_port);
 DECLARE_string(scheduler_addr);
 DECLARE_int32(file_stream_max_pending_request);
@@ -796,6 +797,16 @@ void LogStream::Run() {
             info_->curr_pending_req = curr_pending_req;
         }
         pthread_spin_unlock(server_addr_lock_);
+
+        if (FLAGS_cpu_precentage_use > 0 && FLAGS_cpu_precentage_use <= 100) {
+            struct timespec ts_spec;
+            ts_spec.tv_nsec = ((end_ts - start_ts) % 1000000) * 1000 * (100 / FLAGS_cpu_precentage_use - 1);
+            ts_spec.tv_sec = (end_ts - start_ts) / 1000000 * (100 / FLAGS_cpu_precentage_use - 1);
+            ts_spec.tv_sec += ts_spec.tv_nsec / 1000000000;
+            ts_spec.tv_nsec %= 1000000000;
+            VLOG(30) << "sleep time: " << ts_spec.tv_sec << ", " << ts_spec.tv_nsec;
+            nanosleep(&ts_spec, NULL);
+        }
     }
 }
 
@@ -2405,26 +2416,29 @@ ssize_t FileStream::ParseLine(char* buf, ssize_t size, std::vector<std::string>*
     boost::split((*line_vec), str, boost::is_any_of(ld));
     nr_lines = line_vec->size();
     VLOG(30) << "parse line, nr of line " << nr_lines;
+    if (line_vec->size() == 0) {
+        return 0;
+    }
+
     bool half_line = false;
-    //if ((buf[size -1] != '\n') || ((*line_vec)[nr_lines - 1].size() == 0)) {
-    //    line_vec->pop_back();
-    //}
     if ((*line_vec)[nr_lines - 1].size() == 0) {
         // full line case : aaaaaaaaaaaa\nbbbbbbbbbb\nccccccccccccccccc\n
         line_vec->pop_back();
     } else if (buf[size -1] != '\n' || buf[size -1] != '\0' || buf[size -1] != '\r') {
         // half line case : aaaaaaaaaaaa\nbbbbbbbbbb\nccccccccccccccccc
         half_line = true;
-        if (!read_half_line) {
-            line_vec->pop_back();
-        }
     }
-    for (uint32_t i = 0; i < line_vec->size(); i++) {
-        if (!half_line || (i != (line_vec->size() - 1))) {
-            res += (*line_vec)[i].size() + 1;
-        }
-        VLOG(70) << "line: " << (*line_vec)[i] << ", res " << res << ", size " << size;
+    for (uint32_t i = 0; i < line_vec->size() - 1; i++) {
+        res += (*line_vec)[i].size() + 1;
     }
+    if (!half_line) { // full line
+        res += (*line_vec)[line_vec->size() - 1].size() + 1;
+    } else if (read_half_line) { // need half line
+        res += (*line_vec)[line_vec->size() - 1].size();
+    } else { // drop half line
+        line_vec->pop_back();
+    }
+    VLOG(40) << "line_nr: " << line_vec->size() << ", res " << res << ", size " << size;
     return res;
 }
 
@@ -2526,11 +2540,28 @@ int FileStream::Read(std::vector<std::string>* line_vec, DBKey** key) {
             return 0;
 
         } else {
+            //struct stat stat_buf;
+            //int64_t fsize = -1;
+            //int64_t fino = -1;
+            //if (lstat(filename_.c_str(), &stat_buf) >= 0) {
+            //    fsize = (int64_t)(stat_buf.st_size);
+            //    fino = (int64_t)(stat_buf.st_ino);
+            //}
+            //VLOG(30) << "read file end: ino " << ino_ << ", offset " << offset << ",file " << filename_
+            //    << ", st ino " << fino << ", st size " << fsize;
             uint64_t tmp_res = res;
-            res = ParseLine(buf, tmp_res, line_vec, tmp_res < size);
-            if ((tmp_res == size) && (res <= 0)) {
-                res = -2; // delay retry
+            res = ParseLine(buf, tmp_res, line_vec, true);
+            if (line_vec->size() == 0) {
+                delete [] buf;
+                return 0;
             }
+            // drop half line, if line_nr > 1
+            if (tmp_res != res && line_vec->size() > 1) {
+                line_vec->pop_back();
+            }
+            //if ((tmp_res == size) && (res <= 0)) {
+            //    res = -2; // delay retry
+            //}
         }
 
         if (res >= 0) {
@@ -2733,17 +2764,19 @@ int FileStream::CheckPointRead(std::vector<std::string>* line_vec, DBKey** key,
             return 0;
         }
         uint64_t tmp_res = res;
-        res = ParseLine(buf, tmp_res, line_vec, tmp_res < size);
-        if ((tmp_res == size) && (res <= 0)) {
-            LOG(WARNING) << "redo cp, parse buf, size not match, offset " << offset << ", size " << size << ", res " << res;
-            ret = -1;
-        } else {
-            *key = new DBKey;
-            (*key)->filename = filename_;
-            (*key)->ino = ino_;
-            (*key)->offset = offset;
-            (*key)->ref.Set(0);
+        res = ParseLine(buf, tmp_res, line_vec, true);
+        if (tmp_res != res) {
+            delete [] buf;
+            LOG(WARNING) << "redo cp, parse buf, size not match, offset " << offset
+                << ", size " << size << ", res " << res << ", tmp_res " << tmp_res;
+            return -1;
         }
+
+        *key = new DBKey;
+        (*key)->filename = filename_;
+        (*key)->ino = ino_;
+        (*key)->offset = offset;
+        (*key)->ref.Set(0);
         delete [] buf;
     } else {
         ret = -1;
